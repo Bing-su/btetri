@@ -1,0 +1,17 @@
+amends "package://github.com/jdx/hk/releases/download/v2.7.0/hk@2.7.0#/Config.pkl"
+import "package://github.com/jdx/hk/releases/download/v2.7.0/hk@2.7.0#/Builtins.pkl"
+// Using a coding agent? See https://hk.jdx.dev/agents
+
+local linters = new Mapping {
+    ["check-case-conflict"] = Builtins.check_case_conflict
+    ["check-merge-conflict"] = Builtins.check_merge_conflict
+    ["mixed-line-ending"] = Builtins.mixed_line_ending
+    ["newlines"] = Builtins.newlines
+    ["trailing-whitespace"] = Builtins.trailing_whitespace
+
+    ["oxfmt"] = Builtins.oxfmt
+    ["tombi-format"] = Builtins.tombi_format
+    ["cargo_fmt"] = Builtins.cargo_fmt
+}
+
+steps = linters
