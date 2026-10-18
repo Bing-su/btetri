@@ -35,11 +35,11 @@ impl Scoring {
             (Spin::None, 1) | (Spin::Mini, 0) => 100,
             (Spin::None, 2) => 300,
             (Spin::None, 3) => 500,
-            (Spin::None, 4) | (Spin::Full, 1) => 800,
+            (Spin::None, 4) | (Spin::Full, 1) | (Spin::Mini, 3) => 800,
             (Spin::Mini, 1) => 200,
             (Spin::Mini, 2) | (Spin::Full, 0) => 400,
             (Spin::Full, 2) => 1200,
-            (Spin::Full, 3) => 1600,
+            (Spin::Full, 3) | (Spin::Mini, 4) => 1600,
             _ => 0,
         };
         let difficult = lines > 0 && (lines == 4 || spin != Spin::None);
@@ -56,18 +56,7 @@ impl Scoring {
         let clear_points = if back_to_back { base * 3 / 2 } else { base };
         let perfect_clear = perfect_clear && lines > 0;
         // Add PC separately: its bonus is level-scaled, but never multiplied by B2B.
-        let perfect_points = if perfect_clear {
-            match (lines, back_to_back) {
-                (1, _) => 800,
-                (2, _) => 1200,
-                (3, _) => 1800,
-                (4, true) => 3200,
-                (4, false) => 2000,
-                _ => 0,
-            }
-        } else {
-            0
-        };
+        let perfect_points = if perfect_clear { 3500 } else { 0 };
         let event = ScoreEvent {
             spin,
             lines,
@@ -97,6 +86,8 @@ mod tests {
     #[case(Spin::Mini, 0, 100)]
     #[case(Spin::Mini, 1, 200)]
     #[case(Spin::Mini, 2, 400)]
+    #[case(Spin::Mini, 3, 800)]
+    #[case(Spin::Mini, 4, 1600)]
     #[case(Spin::Full, 0, 400)]
     #[case(Spin::Full, 1, 800)]
     #[case(Spin::Full, 2, 1200)]

@@ -142,14 +142,7 @@ fn menu(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let player = app.name_draft.as_deref().unwrap_or(&app.config.player);
     for (index, (item, value)) in [
         (MenuItem::Player, player.to_owned()),
-        (
-            MenuItem::Mode,
-            format!("< {} >", app.config.mode.to_string().to_uppercase()),
-        ),
-        (
-            MenuItem::StartLevel,
-            format!("< {:02} >", app.config.start_level),
-        ),
+        (MenuItem::Mode, format!("< {} >", app.config.mode.label())),
     ]
     .into_iter()
     .enumerate()
@@ -192,7 +185,7 @@ fn menu(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Paragraph::new(focused(item.label(), app.menu_selection == item, app)),
             Rect::new(
                 form.x + 12,
-                form.y + 9 + u16::try_from(index).unwrap_or_default() * 2,
+                form.y + 6 + u16::try_from(index).unwrap_or_default() * 2,
                 20,
                 1,
             ),
@@ -239,9 +232,9 @@ fn help(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(format!("{}    Hold", Keys::label(&keys.hold))),
         Line::from(format!("{}    Pause", Keys::label(&keys.pause))),
         Line::from(""),
-        Line::from("Marathon: increase level every 10 lines"),
-        Line::from("Sprint: clear 40 lines"),
-        Line::from("Ultra: score within 2 minutes"),
+        Line::from("40 LINES: clear 40 lines at fixed gravity"),
+        Line::from("BLITZ: score within 2 minutes; gravity increases"),
+        Line::from("PRACTICE: unlimited; clear board on topout"),
         Line::from(""),
     ];
     lines.push(key_hints(&[("Esc", "close")], app));
@@ -310,7 +303,7 @@ mod tests {
         #[values((80, 28), (100, 40))] size: (u16, u16),
     ) {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         app.screen = screen;
         app.save = SaveState::Saved;
         app.dialog_selection = selected;
@@ -369,7 +362,7 @@ mod tests {
         #[values((80, 28), (100, 40))] size: (u16, u16),
     ) {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         app.screen = screen;
         if editing {
             app.name_draft = Some("Alice".into());
@@ -398,7 +391,7 @@ mod tests {
     fn menu_has_controls() {
         let app = App::try_from(Config::default()).unwrap();
         let text = screen(&app, 100, 36);
-        for label in ["MAIN MENU", "PLAYER", "MARATHON", "START GAME", "RECORDS"] {
+        for label in ["MAIN MENU", "PLAYER", "40 LINES", "START GAME", "RECORDS"] {
             assert!(text.contains(label));
         }
     }
@@ -406,7 +399,6 @@ mod tests {
     #[rstest::rstest]
     #[case(MenuItem::Player, "PLAYER")]
     #[case(MenuItem::Mode, "MODE")]
-    #[case(MenuItem::StartLevel, "START LEVEL")]
     #[case(MenuItem::Start, "START GAME")]
     #[case(MenuItem::Records, "RECORDS")]
     #[case(MenuItem::Quit, "QUIT")]
@@ -419,9 +411,9 @@ mod tests {
     #[test]
     fn gameplay_pause_result_and_empty_records_render() {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         let text = screen(&app, 80, 28);
-        assert!(text.contains("MARATHON"));
+        assert!(text.contains("40 LINES"));
         assert!(text.contains("HOLD"));
         assert!(text.contains("NEXT"));
         app.screen = Screen::Paused;
@@ -433,7 +425,7 @@ mod tests {
         assert!(!text.contains("Record saved"));
         app.save = SaveState::Failed("Database unavailable".into());
         assert!(screen(&app, 80, 28).contains("Save failed: R retry"));
-        app.open_records(Mode::Marathon);
+        app.open_records(Mode::FortyLines);
         app.records = crate::app::RecordsState::Loaded(Vec::new());
         assert!(screen(&app, 80, 28).contains("No records"));
     }
@@ -468,7 +460,7 @@ mod tests {
     #[case(100, 40)]
     fn save_error_stays_above_the_key_hints(#[case] width: u16, #[case] height: u16) {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         app.screen = Screen::GameOver;
         app.save = SaveState::Failed("Database unavailable".into());
         app.key(crossterm::event::KeyEvent::new(
@@ -491,9 +483,9 @@ mod tests {
     #[test]
     fn selected_record_remains_visible_at_minimum_size() {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         let base = crate::storage::Record::from_game(app.game.as_ref().unwrap(), "PLAYER").unwrap();
-        app.open_records(Mode::Marathon);
+        app.open_records(Mode::FortyLines);
         app.records = crate::app::RecordsState::Loaded(
             (0..20)
                 .map(|index| crate::storage::Record {

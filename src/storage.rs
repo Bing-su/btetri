@@ -34,11 +34,15 @@ pub struct Record {
 
 impl Record {
     pub fn from_game(game: &Game, player: &str) -> miette::Result<Self> {
+        if game.mode() == Mode::Practice {
+            return Err(miette::miette!("practice has no ranked records"));
+        }
         Ok(Self {
             id: format!("{:032x}", rand::random::<u128>()),
             mode: game.mode().to_string(),
             player: player.to_owned(),
-            start_level: i64::from(game.start_level()),
+            // Keep the legacy column intact so existing databases remain readable.
+            start_level: 1,
             level: i64::from(game.level()),
             lines: i64::from(game.lines()),
             score: game.score().try_into().into_diagnostic()?,
@@ -131,6 +135,9 @@ impl Store {
     }
 
     pub fn records(&self, mode: Mode) -> miette::Result<Vec<Record>> {
+        if mode == Mode::Practice {
+            return Err(miette::miette!("practice has no ranked records"));
+        }
         let mut statement = self
             .db
             .prepare(
@@ -164,7 +171,7 @@ impl Store {
 }
 
 fn rank_records(mode: Mode, a: &Record, b: &Record) -> Ordering {
-    let primary = if mode == Mode::Sprint {
+    let primary = if mode == Mode::FortyLines {
         let a_done = a.outcome == "complete";
         let b_done = b.outcome == "complete";
         b_done.cmp(&a_done).then_with(|| {
@@ -186,15 +193,40 @@ fn rank_records(mode: Mode, a: &Record, b: &Record) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::game::Rules;
 
     #[test]
-    fn sprint_ranks_finishes_before_partial_runs_and_score_modes_use_score() {
-        let base = Record::from_game(
-            &Game::new(Mode::Sprint, Rules::default(), 1).unwrap(),
-            "Alice",
-        )
-        .unwrap();
+    fn retired_records_remain_unchanged_and_outside_new_rankings() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("records.db");
+        let store = Store::open(&path).unwrap();
+        let mut old = Record::from_game(&Game::new(Mode::FortyLines, 42), "Alice").unwrap();
+        for mode in ["marathon", "sprint", "ultra"] {
+            old.id = mode.into();
+            old.mode = mode.into();
+            old.score = 9876;
+            store.save(&old).unwrap();
+        }
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        for mode in [Mode::FortyLines, Mode::Blitz] {
+            assert!(store.records(mode).unwrap().is_empty());
+        }
+        let unchanged: u32 = store
+            .db
+            .query_row(
+                "SELECT COUNT(*) FROM game_records WHERE id = mode AND score = 9876",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(unchanged, 3);
+        store.records(Mode::Practice).unwrap_err();
+        Record::from_game(&Game::new(Mode::Practice, 42), "Alice").unwrap_err();
+    }
+
+    #[test]
+    fn forty_lines_ranks_finishes_before_partial_runs_and_blitz_uses_score() {
+        let base = Record::from_game(&Game::new(Mode::FortyLines, 1), "Alice").unwrap();
         let mut rows = [
             Record {
                 id: "partial39".into(),
@@ -227,18 +259,16 @@ mod tests {
                 ..base
             },
         ];
-        rows.sort_by(|a, b| rank_records(Mode::Sprint, a, b));
+        rows.sort_by(|a, b| rank_records(Mode::FortyLines, a, b));
         assert_eq!(
             rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),
             ["fast", "slow", "partial39", "partial20"]
         );
-        for mode in [Mode::Marathon, Mode::Ultra] {
-            rows.sort_by(|a, b| rank_records(mode, a, b));
-            assert_eq!(
-                rows.iter().map(|row| row.score).collect::<Vec<_>>(),
-                [9000, 5000, 3000, 2000]
-            );
-        }
+        rows.sort_by(|a, b| rank_records(Mode::Blitz, a, b));
+        assert_eq!(
+            rows.iter().map(|row| row.score).collect::<Vec<_>>(),
+            [9000, 5000, 3000, 2000]
+        );
     }
 
     #[rstest::rstest]
@@ -252,11 +282,7 @@ mod tests {
     fn reopening_preserves_records_and_retry_is_idempotent(#[case] filename: &str) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(filename);
-        let record = Record::from_game(
-            &Game::new(Mode::Marathon, Rules::default(), 1).unwrap(),
-            "Alice",
-        )
-        .unwrap();
+        let record = Record::from_game(&Game::new(Mode::FortyLines, 1), "Alice").unwrap();
         {
             let store = Store::open(&path).unwrap();
             store.save(&record).unwrap();
@@ -265,10 +291,10 @@ mod tests {
         // Check the literal filename so reopening the same misparsed URL cannot hide a wrong DB.
         assert!(path.is_file(), "database missing at {}", path.display());
         let store = Store::open(&path).unwrap();
-        let rows = store.records(Mode::Marathon).unwrap();
+        let rows = store.records(Mode::FortyLines).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows, [record]);
-        assert!(store.records(Mode::Ultra).unwrap().is_empty());
+        assert!(store.records(Mode::Blitz).unwrap().is_empty());
     }
 
     #[test]
@@ -277,17 +303,13 @@ mod tests {
         let path = dir.path().join("records.db");
         let first = Store::open(&path).unwrap();
         let second = Store::open(&path).unwrap();
-        let mut record = Record::from_game(
-            &Game::new(Mode::Marathon, Rules::default(), 1).unwrap(),
-            "Alice",
-        )
-        .unwrap();
+        let mut record = Record::from_game(&Game::new(Mode::FortyLines, 1), "Alice").unwrap();
         first.save(&record).unwrap();
         assert_eq!(
-            second.records(Mode::Marathon).unwrap().as_slice(),
+            second.records(Mode::FortyLines).unwrap().as_slice(),
             std::slice::from_ref(&record)
         );
-        record.mode = "sprint".into();
+        record.mode = "blitz".into();
         record.player = "Bob '테트리스'".into();
         record.start_level = 2;
         record.level = 3;
@@ -297,8 +319,8 @@ mod tests {
         record.completed_at += 1;
         record.outcome = "complete".into();
         second.save(&record).unwrap();
-        assert!(first.records(Mode::Marathon).unwrap().is_empty());
-        assert_eq!(first.records(Mode::Sprint).unwrap(), [record]);
+        assert!(first.records(Mode::FortyLines).unwrap().is_empty());
+        assert_eq!(first.records(Mode::Blitz).unwrap(), [record]);
     }
 
     #[test]
@@ -308,24 +330,20 @@ mod tests {
         let first = Store::open(&path).unwrap();
         let second = Store::open(&path).unwrap();
         second.db.busy_timeout(Duration::ZERO).unwrap();
-        let record = Record::from_game(
-            &Game::new(Mode::Marathon, Rules::default(), 1).unwrap(),
-            "Alice",
-        )
-        .unwrap();
+        let record = Record::from_game(&Game::new(Mode::FortyLines, 1), "Alice").unwrap();
         first.save(&record).unwrap();
         let tx = first.db.unchecked_transaction().unwrap();
         tx.execute("UPDATE game_records SET score = score + 1", [])
             .unwrap();
         // Readers must see the last commit, e.g. while another player's write is uncommitted.
         assert_eq!(
-            second.records(Mode::Marathon).unwrap().as_slice(),
+            second.records(Mode::FortyLines).unwrap().as_slice(),
             std::slice::from_ref(&record)
         );
         assert!(second.save(&record).is_err());
         tx.rollback().unwrap();
         second.save(&record).unwrap();
-        assert_eq!(first.records(Mode::Marathon).unwrap(), [record]);
+        assert_eq!(first.records(Mode::FortyLines).unwrap(), [record]);
     }
 
     #[test]
@@ -347,15 +365,11 @@ mod tests {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(version, 1);
-        let record = Record::from_game(
-            &Game::new(Mode::Marathon, Rules::default(), 1).unwrap(),
-            "Alice",
-        )
-        .unwrap();
+        let record = Record::from_game(&Game::new(Mode::FortyLines, 1), "Alice").unwrap();
         store.save(&record).unwrap();
         db.pragma_update(None, "user_version", 2).unwrap();
         assert!(Store::open(&path).is_err());
-        assert_eq!(store.records(Mode::Marathon).unwrap(), [record]);
+        assert_eq!(store.records(Mode::FortyLines).unwrap(), [record]);
     }
 
     #[rstest::rstest]
@@ -397,11 +411,7 @@ mod tests {
         let path = dir.path().join("records.db");
         let barrier = std::sync::Barrier::new(2);
         let save = |player| {
-            let record = Record::from_game(
-                &Game::new(Mode::Marathon, Rules::default(), 1).unwrap(),
-                player,
-            )
-            .unwrap();
+            let record = Record::from_game(&Game::new(Mode::FortyLines, 1), player).unwrap();
             barrier.wait();
             let store = Store::open(&path).unwrap();
             store.save(&record).unwrap();
@@ -413,7 +423,7 @@ mod tests {
         });
         let store = Store::open(&path).unwrap();
         let mut players: Vec<_> = store
-            .records(Mode::Marathon)
+            .records(Mode::FortyLines)
             .unwrap()
             .into_iter()
             .map(|record| record.player)

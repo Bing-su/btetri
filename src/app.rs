@@ -1,10 +1,9 @@
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use miette::IntoDiagnostic;
 
 use crate::config::{Config, Keys, validate_player};
-use crate::game::{Action, Game, Mode, Rules, Status};
+use crate::game::{Action, Game, Mode, Status};
 use crate::storage::{Record, Store};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,7 +26,6 @@ pub enum HelpReturn {
 pub enum MenuItem {
     Player,
     Mode,
-    StartLevel,
     Start,
     Records,
     Quit,
@@ -38,7 +36,6 @@ impl MenuItem {
         match self {
             Self::Player => "PLAYER",
             Self::Mode => "MODE",
-            Self::StartLevel => "START LEVEL",
             Self::Start => "START GAME",
             Self::Records => "RECORDS",
             Self::Quit => "QUIT",
@@ -48,8 +45,7 @@ impl MenuItem {
     fn next(self) -> Self {
         match self {
             Self::Player => Self::Mode,
-            Self::Mode => Self::StartLevel,
-            Self::StartLevel => Self::Start,
+            Self::Mode => Self::Start,
             Self::Start => Self::Records,
             Self::Records => Self::Quit,
             Self::Quit => Self::Player,
@@ -60,8 +56,7 @@ impl MenuItem {
         match self {
             Self::Player => Self::Quit,
             Self::Mode => Self::Player,
-            Self::StartLevel => Self::Mode,
-            Self::Start => Self::StartLevel,
+            Self::Start => Self::Mode,
             Self::Records => Self::Start,
             Self::Quit => Self::Records,
         }
@@ -140,7 +135,7 @@ impl TryFrom<Config> for App {
             record: None,
             save: SaveState::None,
             records: RecordsState::Loaded(Vec::new()),
-            record_mode: Mode::Marathon,
+            record_mode: Mode::FortyLines,
             record_selection: 0,
             records_back: Screen::Menu,
             notice: None,
@@ -153,21 +148,15 @@ impl TryFrom<Config> for App {
 }
 
 impl App {
-    pub fn start(&mut self) -> miette::Result<()> {
+    pub fn start(&mut self) {
         self.clear_held_keys();
         self.pressed_actions.clear();
-        let rules = Rules {
-            start_level: self.config.start_level,
-            max_level: self.config.max_level,
-            end_on_max_level: self.config.end_on_max_level,
-        };
-        self.game = Some(Game::new(self.config.mode, rules, rand::random()).into_diagnostic()?);
+        self.game = Some(Game::new(self.config.mode, rand::random()));
         self.record = None;
         self.save = SaveState::None;
         self.screen = Screen::Playing;
         self.dialog_selection = 0;
         self.notice = None;
-        Ok(())
     }
 
     pub fn open_records(&mut self, mode: Mode) {
@@ -177,7 +166,11 @@ impl App {
             Screen::Menu
         };
         self.screen = Screen::Records;
-        self.record_mode = mode;
+        self.record_mode = if mode == Mode::Practice {
+            Mode::FortyLines
+        } else {
+            mode
+        };
         self.request_records();
     }
 
@@ -288,7 +281,7 @@ impl App {
             return Ok(());
         }
         match self.screen {
-            Screen::Menu => self.menu_key(key)?,
+            Screen::Menu => self.menu_key(key),
             Screen::Playing => self.playing_key(key)?,
             Screen::Help(return_to) => {
                 if key.code == KeyCode::Esc || Keys::matches(&self.config.keys.help, key) {
@@ -299,16 +292,16 @@ impl App {
                 }
             }
             Screen::Paused => self.pause_key(key),
-            Screen::GameOver => self.result_key(key)?,
+            Screen::GameOver => self.result_key(key),
             Screen::Records => self.records_key(key),
         }
         Ok(())
     }
 
-    fn menu_key(&mut self, key: KeyEvent) -> miette::Result<()> {
+    fn menu_key(&mut self, key: KeyEvent) {
         if self.name_draft.is_some() {
             self.edit_name(key);
-            return Ok(());
+            return;
         }
         match key.code {
             KeyCode::Up => self.menu_selection = self.menu_selection.previous(),
@@ -318,14 +311,13 @@ impl App {
             KeyCode::Esc => self.quit = true,
             KeyCode::Enter => match self.menu_selection {
                 MenuItem::Player => self.name_draft = Some(self.config.player.clone()),
-                MenuItem::Mode | MenuItem::StartLevel => self.change_setting(1),
-                MenuItem::Start => self.start()?,
+                MenuItem::Mode => self.change_setting(1),
+                MenuItem::Start => self.start(),
                 MenuItem::Records => self.open_records(self.config.mode),
                 MenuItem::Quit => self.quit = true,
             },
             _ => {}
         }
-        Ok(())
     }
 
     fn edit_name(&mut self, key: KeyEvent) {
@@ -367,16 +359,8 @@ impl App {
     }
 
     fn change_setting(&mut self, delta: i32) {
-        match self.menu_selection {
-            MenuItem::Mode => self.config.mode = self.config.mode.cycle(delta),
-            MenuItem::StartLevel => {
-                self.config.start_level = self
-                    .config
-                    .start_level
-                    .saturating_add_signed(delta)
-                    .clamp(1, self.config.max_level)
-            }
-            _ => {}
+        if self.menu_selection == MenuItem::Mode {
+            self.config.mode = self.config.mode.cycle(delta);
         }
     }
 
@@ -450,11 +434,11 @@ impl App {
         }
     }
 
-    fn result_key(&mut self, key: KeyEvent) -> miette::Result<()> {
+    fn result_key(&mut self, key: KeyEvent) {
         if key.code == KeyCode::Char('r') && matches!(self.save, SaveState::Failed(_)) {
             self.save = SaveState::Pending;
             self.notice = None;
-            return Ok(());
+            return;
         }
         match key.code {
             KeyCode::Up => self.dialog_selection = (self.dialog_selection + 2) % 3,
@@ -465,13 +449,12 @@ impl App {
             }
             KeyCode::Esc => self.return_to_menu(),
             KeyCode::Enter => match self.dialog_selection {
-                0 => self.start()?,
+                0 => self.start(),
                 1 => self.open_records(self.config.mode),
                 _ => self.return_to_menu(),
             },
             _ => {}
         }
-        Ok(())
     }
 
     fn return_to_menu(&mut self) {
@@ -486,12 +469,12 @@ impl App {
     fn records_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => self.screen = self.records_back,
-            KeyCode::Left => {
-                self.record_mode = self.record_mode.cycle(-1);
-                self.request_records();
-            }
-            KeyCode::Right => {
-                self.record_mode = self.record_mode.cycle(1);
+            KeyCode::Left | KeyCode::Right => {
+                self.record_mode = if self.record_mode == Mode::FortyLines {
+                    Mode::Blitz
+                } else {
+                    Mode::FortyLines
+                };
                 self.request_records();
             }
             KeyCode::Up => self.record_selection = self.record_selection.saturating_sub(1),
@@ -516,6 +499,29 @@ impl App {
 mod tests {
     use super::*;
 
+    #[test]
+    fn practice_continues_without_save_and_records_skip_practice() {
+        let mut app = App::try_from(Config {
+            mode: Mode::Practice,
+            ..Config::default()
+        })
+        .unwrap();
+        app.start();
+        for _ in 0..100 {
+            app.key(key(KeyCode::Char(' '))).unwrap();
+        }
+        assert!(app.game.as_ref().unwrap().practice_resets() > 0);
+        assert_eq!(app.screen, Screen::Playing);
+        assert!(app.record.is_none());
+        assert!(matches!(app.save, SaveState::None));
+        app.open_records(Mode::Practice);
+        assert_eq!(app.record_mode, Mode::FortyLines);
+        app.key(key(KeyCode::Right)).unwrap();
+        assert_eq!(app.record_mode, Mode::Blitz);
+        app.key(key(KeyCode::Right)).unwrap();
+        assert_eq!(app.record_mode, Mode::FortyLines);
+    }
+
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
@@ -526,7 +532,7 @@ mod tests {
     fn ctrl_c_holds_without_quitting(#[case] keyboard_releases: bool) {
         let mut app = App::try_from(Config::default()).unwrap();
         app.keyboard_releases = keyboard_releases;
-        app.start().unwrap();
+        app.start();
         let initial_piece = app.game.as_ref().unwrap().active().kind;
 
         // Ctrl rotation must allow a following C hold without exiting the game.
@@ -543,7 +549,7 @@ mod tests {
         let config = Config::parse("[keys]\nsoft_drop = ['down', 's']", "test").unwrap();
         let mut app = App::try_from(config).unwrap();
         app.keyboard_releases = true;
-        app.start().unwrap();
+        app.start();
         let initial_y = app.game.as_ref().unwrap().active().y;
         app.key(key(KeyCode::Down)).unwrap();
         app.key(KeyEvent::new_with_kind(
@@ -575,7 +581,7 @@ mod tests {
     #[test]
     fn legacy_soft_drop_steps_on_press_and_repeat_without_latching() {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         let initial_y = app.game.as_ref().unwrap().active().y;
         for kind in [KeyEventKind::Press, KeyEventKind::Repeat] {
             app.key(KeyEvent::new_with_kind(
@@ -594,7 +600,7 @@ mod tests {
     fn repeated_press_does_not_hard_drop_again_until_release() {
         let mut app = App::try_from(Config::default()).unwrap();
         app.keyboard_releases = true;
-        app.start().unwrap();
+        app.start();
         app.key(key(KeyCode::Char(' '))).unwrap();
         let board = *app.game.as_ref().unwrap().board();
         let active = app.game.as_ref().unwrap().active();
@@ -618,7 +624,7 @@ mod tests {
     fn leaving_play_clears_held_soft_drop(#[case] dialog: Option<KeyCode>) {
         let mut app = App::try_from(Config::default()).unwrap();
         app.keyboard_releases = true;
-        app.start().unwrap();
+        app.start();
         app.key(key(KeyCode::Down)).unwrap();
         assert!(app.game.as_ref().unwrap().soft_drop());
         if let Some(code) = dialog {
@@ -641,7 +647,7 @@ mod tests {
     #[case(KeyCode::Char('c'))]
     fn one_shot_actions_ignore_reported_repeats(#[case] code: KeyCode) {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         let before = app.game.as_ref().unwrap().active();
         app.key(KeyEvent::new_with_kind(
             code,
@@ -672,7 +678,6 @@ mod tests {
             MenuItem::Quit,
             MenuItem::Player,
             MenuItem::Mode,
-            MenuItem::StartLevel,
             MenuItem::Start,
         ] {
             let previous = app.menu_selection;
@@ -695,18 +700,13 @@ mod tests {
         assert_eq!(app.menu_selection, MenuItem::Mode);
 
         app.key(key(KeyCode::Right)).unwrap();
-        assert_eq!(app.config.mode, Mode::Sprint);
+        assert_eq!(app.config.mode, Mode::Blitz);
         app.key(key(KeyCode::Left)).unwrap();
-        assert_eq!(app.config.mode, Mode::Marathon);
-        app.key(key(KeyCode::Down)).unwrap();
-        app.key(key(KeyCode::Left)).unwrap();
-        assert_eq!(app.config.start_level, 1);
-        app.key(key(KeyCode::Enter)).unwrap();
-        assert_eq!(app.config.start_level, 2);
+        assert_eq!(app.config.mode, Mode::FortyLines);
         app.key(key(KeyCode::Down)).unwrap();
         app.key(key(KeyCode::Enter)).unwrap();
         assert_eq!(app.screen, Screen::Playing);
-        assert_eq!(app.game.as_ref().unwrap().start_level(), 2);
+        assert_eq!(app.game.as_ref().unwrap().mode(), Mode::FortyLines);
 
         app.key(key(KeyCode::Esc)).unwrap();
         app.key(key(KeyCode::Down)).unwrap();
@@ -716,7 +716,7 @@ mod tests {
         app.key(key(KeyCode::Down)).unwrap();
         app.key(key(KeyCode::Enter)).unwrap();
         assert_eq!(app.screen, Screen::Records);
-        assert_eq!(app.record_mode, Mode::Marathon);
+        assert_eq!(app.record_mode, Mode::FortyLines);
         assert!(matches!(app.records, RecordsState::Requested));
         app.key(key(KeyCode::Esc)).unwrap();
         app.key(key(KeyCode::Down)).unwrap();
@@ -727,7 +727,7 @@ mod tests {
     #[test]
     fn pause_freezes_time_and_resume_keeps_board() {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         app.advance(Duration::from_millis(200)).unwrap();
         let before = app.game.as_ref().unwrap().active();
         app.key(key(KeyCode::Esc)).unwrap();
@@ -744,8 +744,8 @@ mod tests {
     #[test]
     fn finished_game_cannot_be_replaced_before_save() {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.config.mode = Mode::Ultra;
-        app.start().unwrap();
+        app.config.mode = Mode::Blitz;
+        app.start();
         app.advance(Duration::from_secs(120)).unwrap();
         assert_eq!(app.screen, Screen::GameOver);
         let id = app.record.as_ref().unwrap().id.clone();
@@ -775,7 +775,7 @@ mod tests {
     #[test]
     fn help_freezes_game_and_resize_requires_explicit_resume() {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         app.advance(Duration::from_millis(200)).unwrap();
         app.key(key(KeyCode::Char('?'))).unwrap();
         app.advance(Duration::from_secs(10)).unwrap();
@@ -800,10 +800,10 @@ mod tests {
         let store = Store::open(&path).unwrap();
         let db = rusqlite::Connection::open(path).unwrap();
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         let row = Record::from_game(app.game.as_ref().unwrap(), "Alice").unwrap();
         store.save(&row).unwrap();
-        app.open_records(Mode::Marathon);
+        app.open_records(Mode::FortyLines);
         app.process_storage(&store);
         assert_eq!(app.records.rows(), std::slice::from_ref(&row));
         // A later frame must not query again, e.g. after another connection changes the table.
@@ -823,8 +823,8 @@ mod tests {
         let store = Store::open(&path).unwrap();
         let db = rusqlite::Connection::open(path).unwrap();
         let mut app = App::try_from(Config::default()).unwrap();
-        app.config.mode = Mode::Ultra;
-        app.start().unwrap();
+        app.config.mode = Mode::Blitz;
+        app.start();
         app.advance(Duration::from_secs(120)).unwrap();
         let current = app.record.clone().unwrap();
         app.process_storage(&store);
@@ -837,7 +837,7 @@ mod tests {
         // Hide the table temporarily to exercise the real query failure and retry path.
         db.execute("ALTER TABLE game_records RENAME TO unavailable", [])
             .unwrap();
-        app.open_records(Mode::Ultra);
+        app.open_records(Mode::Blitz);
         app.process_storage(&store);
         assert!(matches!(app.records, RecordsState::Failed(_)));
         db.execute("ALTER TABLE unavailable RENAME TO game_records", [])

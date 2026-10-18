@@ -21,14 +21,18 @@ use crate::ui;
 
 pub fn run() -> miette::Result<()> {
     let options = Options::parse();
+    if let Some(Command::Records(records)) = &options.command
+        && records.mode == Some(crate::game::Mode::Practice)
+    {
+        return Err(miette::miette!(
+            "practice has no ranked records; choose 40l or blitz"
+        ));
+    }
     let required_config = options.config.is_some();
     let paths = Paths::resolve(options.config, options.db)?;
     let mut config = Config::load(&paths.config, required_config)?;
     if let Some(Command::Play(play)) = &options.command {
         config.mode = play.mode;
-        if let Some(level) = play.level {
-            config.start_level = level;
-        }
         if let Some(name) = &play.name {
             config.player.clone_from(name);
         }
@@ -41,7 +45,7 @@ pub fn run() -> miette::Result<()> {
     }
     let store = Store::open(&paths.db)?;
     match options.command {
-        Some(Command::Play(_)) => app.start()?,
+        Some(Command::Play(_)) => app.start(),
         Some(Command::Records(records)) => app.open_records(records.mode.unwrap_or_default()),
         None => {}
     }
@@ -136,8 +140,8 @@ mod tests {
         let store = Store::open(&path).unwrap();
         let db = rusqlite::Connection::open(path).unwrap();
         let mut app = App::try_from(Config::default()).unwrap();
-        app.config.mode = Mode::Ultra;
-        app.start().unwrap();
+        app.config.mode = Mode::Blitz;
+        app.start();
         app.advance(Duration::from_secs(120)).unwrap();
         let record = app.record.clone().unwrap();
         // Fail the final save, e.g. after a disconnect prevents an in-app retry.
@@ -171,8 +175,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("records.db")).unwrap();
         let mut app = App::try_from(Config::default()).unwrap();
-        app.config.mode = Mode::Ultra;
-        app.start().unwrap();
+        app.config.mode = Mode::Blitz;
+        app.start();
         app.advance(Duration::from_secs(120)).unwrap();
         app.quit = true;
         let result = app.finish_session(
@@ -190,10 +194,10 @@ mod tests {
         }
         assert!(matches!(app.save, SaveState::Saved));
         assert_eq!(
-            store.records(Mode::Ultra).unwrap(),
+            store.records(Mode::Blitz).unwrap(),
             [app.record.clone().unwrap()]
         );
-        app.open_records(Mode::Ultra);
+        app.open_records(Mode::Blitz);
         app.process_storage(&store);
         assert_eq!(app.records.rows(), [app.record.clone().unwrap()]);
     }
@@ -205,8 +209,8 @@ mod tests {
         let store = Store::open(&path).unwrap();
         let db = rusqlite::Connection::open(path).unwrap();
         let mut app = App::try_from(Config::default()).unwrap();
-        app.config.mode = Mode::Ultra;
-        app.start().unwrap();
+        app.config.mode = Mode::Blitz;
+        app.start();
         app.advance(Duration::from_secs(120)).unwrap();
         let record = app.record.clone().unwrap();
         // Simulate a storage failure without a timing-dependent disk or lock fixture.
@@ -220,6 +224,6 @@ mod tests {
             .unwrap();
         app.process_storage(&store);
         assert!(matches!(app.save, SaveState::Saved));
-        assert_eq!(store.records(Mode::Ultra).unwrap(), [record]);
+        assert_eq!(store.records(Mode::Blitz).unwrap(), [record]);
     }
 }

@@ -4,9 +4,9 @@
 //!
 //! ```
 //! use std::time::Duration;
-//! use btetri::game::{Action, Game, Rules};
+//! use btetri::game::{Action, Game, Mode};
 //!
-//! let mut game = Game::new("marathon".parse()?, Rules::default(), 42)?;
+//! let mut game = Game::new(Mode::FortyLines, 42);
 //! game.apply(Action::Left);
 //! game.advance(Duration::from_millis(16));
 //! game.apply(Action::HardDrop);

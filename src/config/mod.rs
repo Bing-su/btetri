@@ -19,9 +19,6 @@ pub struct Config {
     pub player: String,
     #[serde(deserialize_with = "deserialize_from_str")]
     pub mode: Mode,
-    pub start_level: u32,
-    pub max_level: u32,
-    pub end_on_max_level: bool,
     pub ghost_enabled: bool,
     pub next_queue_length: usize,
     pub keys: Keys,
@@ -33,9 +30,6 @@ impl Default for Config {
         Self {
             player: "PLAYER".into(),
             mode: Mode::default(),
-            start_level: 1,
-            max_level: 20,
-            end_on_max_level: false,
             ghost_enabled: true,
             next_queue_length: 6,
             keys: Keys::default(),
@@ -88,9 +82,6 @@ impl Config {
 
     pub fn validate(&self) -> Result<(), String> {
         validate_player(&self.player)?;
-        if self.start_level == 0 || self.start_level > self.max_level || self.max_level > 20 {
-            return Err("levels must satisfy 1 <= start_level <= max_level <= 20".into());
-        }
         if !(1..=6).contains(&self.next_queue_length) {
             return Err("next_queue_length must be between 1 and 6".into());
         }
@@ -158,6 +149,8 @@ mod tests {
 
     #[rstest]
     #[case("start_level = 0")]
+    #[case("start_level = 1")]
+    #[case("end_on_max_level = false")]
     #[case("max_level = 21")]
     #[case("next_queue_length = 0")]
     #[case("player = ''")]
@@ -181,7 +174,7 @@ mod tests {
                 .action(KeyEvent::new(KeyCode::Left, KeyModifiers::NONE)),
             Some(Action::Left)
         );
-        assert_eq!(config.max_level, 20);
+        assert_eq!(config.mode, Mode::FortyLines);
     }
 
     #[rstest]
@@ -271,7 +264,7 @@ mod tests {
             "config.example.toml",
         )
         .unwrap();
-        assert_eq!(config.mode, Mode::Marathon);
+        assert_eq!(config.mode, Mode::FortyLines);
         assert_eq!(Keys::label(&config.keys.hold), "C");
         assert_eq!(config.keys.hold.len(), 2);
         assert_eq!(config.theme, Theme::default());

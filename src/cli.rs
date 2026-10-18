@@ -28,11 +28,8 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct Play {
-    /// marathon, sprint (40 lines), or ultra (2 minutes).
+    /// 40l (40 lines), blitz (2 minutes), or practice (unlimited).
     pub mode: Mode,
-    /// Starting level, from 1 to the configured maximum.
-    #[usage(short = 'l', long)]
-    pub level: Option<u32>,
     /// Display name used in the local records.
     #[usage(short = 'n', long)]
     pub name: Option<String>,
@@ -40,7 +37,7 @@ pub struct Play {
 
 #[derive(Debug, Args)]
 pub struct Records {
-    /// marathon, sprint, or ultra; defaults to marathon.
+    /// 40l or blitz; defaults to 40l.
     pub mode: Option<Mode>,
 }
 
@@ -52,23 +49,13 @@ mod tests {
 
     #[test]
     fn direct_play_and_global_paths_are_parsed() {
-        let args = [
-            "play",
-            "sprint",
-            "--level",
-            "5",
-            "--name",
-            "Alice",
-            "--db",
-            "my games.db",
-        ];
+        let args = ["play", "40l", "--name", "Alice", "--db", "my games.db"];
         let args: Vec<_> = args.iter().map(OsStr::new).collect();
         let parsed = Options::parse_from(&args).unwrap();
         let Some(Command::Play(play)) = parsed.command else {
             panic!("expected play")
         };
-        assert_eq!(play.mode, Mode::Sprint);
-        assert_eq!(play.level, Some(5));
+        assert_eq!(play.mode, Mode::FortyLines);
         assert_eq!(play.name.as_deref(), Some("Alice"));
         assert_eq!(parsed.db, Some(PathBuf::from("my games.db")));
     }
@@ -78,7 +65,7 @@ mod tests {
         Options::parse_from(&[OsStr::new("play"), OsStr::new("unknown")]).unwrap_err();
         Options::parse_from(&[
             OsStr::new("play"),
-            OsStr::new("ultra"),
+            OsStr::new("blitz"),
             OsStr::new("--level"),
             OsStr::new("no"),
         ])

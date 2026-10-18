@@ -3,8 +3,149 @@ use rstest::rstest;
 
 use super::*;
 
+#[rstest]
+#[case(0, 1)]
+#[case(2, 1)]
+#[case(3, 2)]
+#[case(7, 2)]
+#[case(8, 3)]
+#[case(14, 3)]
+#[case(15, 4)]
+#[case(24, 5)]
+#[case(120, 11)]
+#[case(198, 14)]
+fn blitz_progresses_at_cumulative_goals(#[case] lines: u32, #[case] level: u32) {
+    let mut game = Game::new(Mode::Blitz, 42);
+    game.lines = lines;
+    assert_eq!(game.level(), level);
+}
+
+#[rstest]
+#[case(0, Duration::from_secs(1))]
+#[case(3, Duration::from_millis(643))]
+#[case(198, Duration::from_nanos(833_333))]
+#[case(260, Duration::from_nanos(833_333))]
+fn blitz_gravity_matches_levels_and_stays_capped(#[case] lines: u32, #[case] interval: Duration) {
+    let mut game = Game::new(Mode::Blitz, 42);
+    game.lines = lines;
+    assert_eq!(game.gravity_interval(), interval);
+}
+
+#[rstest]
+#[case(Mode::FortyLines)]
+#[case(Mode::Practice)]
+fn untimed_modes_keep_fixed_gravity(#[case] mode: Mode) {
+    let mut game = Game::new(mode, 42);
+    game.lines = 200;
+    assert_eq!(game.level(), 1);
+    assert_eq!(game.remaining(), None);
+    let y = game.active().y;
+    game.advance(Duration::from_millis(833));
+    assert_eq!(game.active().y, y);
+    game.advance(Duration::from_millis(1));
+    assert_eq!(game.active().y, y + 1);
+}
+
+#[rstest]
+#[case(Mode::FortyLines, Spin::Mini)]
+#[case(Mode::Practice, Spin::Mini)]
+#[case(Mode::Blitz, Spin::None)]
+fn immobile_o_rotations_follow_the_modes_spin_rule(#[case] mode: Mode, #[case] spin: Spin) {
+    let mut game = Game::new(mode, 42);
+    game.active = ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: 3,
+        y: 37,
+    };
+    // Box the O in without filling rows, e.g. a spin must stay immobile in all four directions.
+    for row in 36..40 {
+        for column in 3..7 {
+            game.board[row][column] = Some(Piece::J);
+        }
+    }
+    for (x, y) in game.active.cells() {
+        game.board[usize::try_from(y).unwrap()][usize::try_from(x).unwrap()] = None;
+    }
+    game.apply(Action::Clockwise);
+    game.apply(Action::HardDrop);
+    assert_eq!(game.last_score().unwrap().spin, spin);
+    assert_eq!(game.score(), if spin == Spin::Mini { 100 } else { 0 });
+}
+
+#[rstest]
+#[case(Action::Hold, false)]
+#[case(Action::HardDrop, false)]
+#[case(Action::HardDrop, true)]
+fn practice_recovers_from_topout_without_losing_session_totals(
+    #[case] action: Action,
+    #[case] timed: bool,
+) {
+    let mut game = Game::new(Mode::Practice, 42);
+    game.score = 123;
+    game.lines = 42;
+    game.elapsed = Duration::from_secs(150);
+    game.board = [[Some(Piece::J); WIDTH]; HEIGHT];
+    for (x, y) in game.active.cells() {
+        game.board[usize::try_from(y).unwrap()][usize::try_from(x).unwrap()] = None;
+    }
+    // Block the hold spawn, or lock entirely above the skyline without clearing a line.
+    game.board[HEIGHT - 1][0] = None;
+    if action == Action::HardDrop {
+        game.board = [[None; WIDTH]; HEIGHT];
+        for (x, y) in game.active.cells() {
+            game.board[usize::try_from(y + 2).unwrap()][usize::try_from(x).unwrap()] =
+                Some(Piece::J);
+        }
+    }
+    let elapsed = if timed {
+        game.advance(Duration::from_millis(500));
+        Duration::from_millis(150_500)
+    } else {
+        game.apply(action);
+        Duration::from_secs(150)
+    };
+    assert_eq!(game.status(), Status::Playing);
+    assert_eq!(game.practice_resets(), 1);
+    assert!(game.board().iter().flatten().all(Option::is_none));
+    assert_eq!(game.lines(), 42);
+    assert!(game.score() >= 123);
+    assert_eq!(game.elapsed(), elapsed);
+    assert_eq!(game.held(), None);
+    assert_eq!(game.last_score(), None);
+    assert!(game.fits(game.active()));
+    game.advance(Duration::from_millis(16));
+    assert_eq!(game.elapsed(), elapsed + Duration::from_millis(16));
+}
+
 fn game() -> Game {
-    Game::new(Mode::Marathon, Rules::default(), 42).unwrap()
+    Game::new(Mode::FortyLines, 42)
+}
+
+#[rstest]
+#[case(Mode::FortyLines, Spin::Mini)]
+#[case(Mode::Practice, Spin::Mini)]
+#[case(Mode::Blitz, Spin::None)]
+fn immobile_t_without_three_corners_is_a_mini_only_with_all_mini_plus(
+    #[case] mode: Mode,
+    #[case] spin: Spin,
+) {
+    let mut game = Game::new(mode, 42);
+    game.active = ActivePiece {
+        kind: Piece::T,
+        rotation: 1,
+        x: 3,
+        y: 37,
+    };
+    // The side blockers stop translations while only one of the four T corners is occupied.
+    for (x, y) in [(2, 38), (6, 38), (4, 36), (3, 39)] {
+        game.board[y][x] = Some(Piece::J);
+    }
+    assert!(game.fits(game.active));
+    game.apply(Action::CounterClockwise);
+    assert_eq!(game.active.rotation, 0);
+    game.apply(Action::HardDrop);
+    assert_eq!(game.last_score().unwrap().spin, spin);
 }
 
 #[rstest]
@@ -532,8 +673,8 @@ fn clutch_clear_cannot_push_cells_above_the_buffer(
 }
 
 #[test]
-fn ultra_finishes_at_exactly_two_minutes() {
-    let mut game = Game::new(Mode::Ultra, Rules::default(), 42).unwrap();
+fn blitz_finishes_at_exactly_two_minutes() {
+    let mut game = Game::new(Mode::Blitz, 42);
     game.elapsed = Duration::from_millis(119_999);
     game.advance(Duration::from_secs(1));
     assert_eq!(game.status(), Status::Complete);
@@ -541,8 +682,8 @@ fn ultra_finishes_at_exactly_two_minutes() {
 }
 
 #[test]
-fn sprint_finishes_after_fortieth_line() {
-    let mut game = Game::new(Mode::Sprint, Rules::default(), 42).unwrap();
+fn forty_lines_finishes_after_fortieth_line() {
+    let mut game = Game::new(Mode::FortyLines, 42);
     game.lines = 39;
     game.board[39] = [Some(Piece::J); WIDTH];
     game.board[39][4] = None;
@@ -664,9 +805,10 @@ fn fifth_srs_kick_scores_triple_and_promotes_mini(
 }
 
 #[test]
-fn spin_uses_the_level_before_crossing_ten_lines() {
+fn spin_uses_the_level_before_crossing_a_blitz_goal() {
     let mut game = spin_slot(Spin::Full, 2);
-    game.lines = 9;
+    game.mode = Mode::Blitz;
+    game.lines = 2;
     game.apply(Action::HardDrop);
     assert_eq!(game.level(), 2);
     assert_eq!(game.score(), 1200);
@@ -750,15 +892,7 @@ fn fewer_than_three_corners_does_not_score_a_spin() {
 
 #[test]
 fn locks_keep_scoring_chains_and_exclude_drop_points_from_b2b() {
-    let mut game = Game::new(
-        Mode::Marathon,
-        Rules {
-            max_level: 1,
-            ..Rules::default()
-        },
-        42,
-    )
-    .unwrap();
+    let mut game = Game::new(Mode::FortyLines, 42);
     let mut total_drop_points = 0;
     for (lines, expected, bonus) in [
         (4, 800, false),
@@ -832,17 +966,17 @@ fn perfect_clear_slot(lines: usize) -> Game {
 }
 
 #[rstest]
-#[case(1, 900)]
-#[case(2, 1500)]
-#[case(3, 2300)]
-#[case(4, 2800)]
+#[case(1, 3600)]
+#[case(2, 3800)]
+#[case(3, 4000)]
+#[case(4, 4300)]
 fn perfect_clear_awards_bonus_at_level_before_line_removal(
     #[case] lines: usize,
     #[case] total: u64,
 ) {
     let mut game = perfect_clear_slot(lines);
-    game.rules.start_level = 3;
-    game.lines = 9;
+    game.mode = Mode::Blitz;
+    game.lines = 14;
     game.apply(Action::HardDrop);
     assert!(game.board.iter().flatten().all(Option::is_none));
     assert!(game.last_score().unwrap().perfect_clear);
@@ -866,10 +1000,10 @@ fn hidden_or_visible_remaining_blocks_prevent_perfect_clear() {
 }
 
 #[test]
-fn b2b_perfect_clear_adds_3200_and_combo_without_multiplying_the_bonus() {
+fn b2b_perfect_clear_adds_3500_and_combo_without_multiplying_the_bonus() {
     let mut game = perfect_clear_slot(4);
     game.apply(Action::HardDrop);
-    assert_eq!(game.score(), 2800);
+    assert_eq!(game.score(), 4300);
     let next = perfect_clear_slot(4);
     game.board = next.board;
     game.active = next.active;
@@ -878,8 +1012,8 @@ fn b2b_perfect_clear_adds_3200_and_combo_without_multiplying_the_bonus() {
     assert!(event.perfect_clear);
     assert!(event.back_to_back);
     assert_eq!(event.combo, Some(1));
-    assert_eq!(event.points, 1200 + 3200 + 50);
-    assert_eq!(game.score(), 7250);
+    assert_eq!(event.points, 1200 + 3500 + 50);
+    assert_eq!(game.score(), 9050);
 }
 
 #[test]
@@ -918,7 +1052,7 @@ fn moving_down_after_rotation_cancels_spin_and_spawn_does_not_inherit_it() {
 proptest! {
     #[test]
     fn every_seven_bag_contains_each_piece(seed in any::<u64>()) {
-        let mut game = Game::new(Mode::Marathon, Rules::default(), seed).unwrap();
+        let mut game = Game::new(Mode::FortyLines, seed);
         for _ in 0..10 {
             let mut bag = Vec::new();
             for _ in 0..7 { bag.push(game.active.kind); game.spawn_next(false); }
@@ -928,7 +1062,7 @@ proptest! {
 
     #[test]
     fn generated_moves_preserve_board_and_ghost_invariants(seed in any::<u64>(), actions in prop::collection::vec(0_u8..9, 0..200)) {
-        let mut game = Game::new(Mode::Marathon, Rules::default(), seed).unwrap();
+        let mut game = Game::new(Mode::FortyLines, seed);
         for action in actions {
             if game.status() != Status::Playing { break; }
             match action {

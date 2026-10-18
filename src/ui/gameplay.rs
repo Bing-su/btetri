@@ -22,7 +22,7 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let Some(game) = &app.game else {
         return;
     };
-    header(frame, area, &game.mode().to_string().to_uppercase(), app);
+    header(frame, area, game.mode().label(), app);
     let (left, board, next) = game_areas(area);
     let dim = app.screen != Screen::Playing;
     playfield(frame, board, game, app, dim);
@@ -203,14 +203,15 @@ fn sidebars(frame: &mut Frame<'_>, left: Rect, next: Rect, game: &Game, app: &Ap
             dim,
         );
     }
-    let time = if game.mode() == Mode::Ultra {
-        game.remaining()
-    } else {
-        game.elapsed()
+    let time = game.remaining().unwrap_or_else(|| game.elapsed());
+    let (progress, value) = match game.mode() {
+        Mode::FortyLines => ("TO GO", 40_u32.saturating_sub(game.lines())),
+        Mode::Blitz => ("LEVEL", game.level()),
+        Mode::Practice => ("RESETS", game.practice_resets()),
     };
     for (offset, label, value) in [
         (7, "SCORE", format!("{:06}", game.score())),
-        (11, "LEVEL", format!("{:02}", game.level())),
+        (11, progress, format!("{value:02}")),
         (14, "LINES", format!("{:03}", game.lines())),
         (18, "TIME", format_duration(time)),
     ] {
@@ -257,7 +258,7 @@ fn score_feedback(event: ScoreEvent) -> Paragraph<'static> {
     } else {
         match event.spin {
             Spin::Full => format!("T-SPIN {}", event.lines),
-            Spin::Mini => format!("MINI T-SPIN {}", event.lines),
+            Spin::Mini => format!("MINI SPIN {}", event.lines),
             Spin::None if event.lines == 4 => "TETRIS".into(),
             Spin::None => format!("{} LINE", event.lines),
         }
@@ -341,8 +342,17 @@ fn result_dialog(frame: &mut Frame<'_>, area: Rect, game: &Game, app: &App) {
             "GAME OVER"
         }),
         Line::from(""),
-        Line::from("FINAL SCORE").style(Style::default().fg(app.config.theme.muted)),
-        Line::from(format!("{:06}", game.score())),
+        Line::from(if game.mode() == Mode::FortyLines {
+            "FINAL TIME"
+        } else {
+            "FINAL SCORE"
+        })
+        .style(Style::default().fg(app.config.theme.muted)),
+        Line::from(if game.mode() == Mode::FortyLines {
+            format_duration(game.elapsed())
+        } else {
+            format!("{:06}", game.score())
+        }),
         Line::from(""),
         Line::from(save).style(Style::default().fg(app.config.theme.muted)),
         Line::from(""),
@@ -388,7 +398,7 @@ mod tests {
         #[values(false, true)] failed_save_notice: bool,
     ) {
         let mut app = App::try_from(Config::default()).unwrap();
-        app.start().unwrap();
+        app.start();
         if failed_save_notice {
             app.screen = Screen::GameOver;
             app.save = SaveState::Failed("Database unavailable".into());
@@ -424,8 +434,8 @@ mod tests {
     }
 
     #[rstest::rstest]
-    #[case(false, "MINI T-SPIN 2", 650)]
-    #[case(true, "PERFECT CLEAR", 4450)]
+    #[case(false, "MINI SPIN 2", 650)]
+    #[case(true, "PERFECT CLEAR", 4750)]
     fn score_feedback_fits_the_sidebar_with_combo_and_b2b(
         #[case] perfect_clear: bool,
         #[case] label: &str,

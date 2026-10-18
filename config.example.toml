@@ -1,9 +1,6 @@
 # Omitted settings keep their defaults; copy this file to the --config path.
 player = "PLAYER"
-mode = "marathon"
-start_level = 1
-max_level = 20
-end_on_max_level = false
+mode = "40l"
 ghost_enabled = true
 next_queue_length = 6
 

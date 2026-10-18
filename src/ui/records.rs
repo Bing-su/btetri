@@ -14,11 +14,7 @@ use crate::game::Mode;
 pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     header(frame, area, "RECORDS", app);
     frame.render_widget(
-        Paragraph::new(format!(
-            "MODE     < {} >",
-            app.record_mode.to_string().to_uppercase()
-        ))
-        .centered(),
+        Paragraph::new(format!("MODE     < {} >", app.record_mode.label())).centered(),
         Rect::new(area.x, area.y + 4, area.width, 1),
     );
     let message = match &app.records {
@@ -108,7 +104,7 @@ fn records_table(frame: &mut Frame<'_>, area: Rect, app: &App) {
         .with_selected(Some(app.record_selection))
         .with_offset(app.record_selection.saturating_sub(visible - 1));
     frame.render_stateful_widget(table, table_area, &mut state);
-    let ordering = if app.record_mode == Mode::Sprint {
+    let ordering = if app.record_mode == Mode::FortyLines {
         "Completed runs, fastest first"
     } else {
         "Score: highest first"

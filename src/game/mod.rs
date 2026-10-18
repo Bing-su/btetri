@@ -1,11 +1,11 @@
+mod mode;
 mod piece;
 mod scoring;
 
 use std::collections::VecDeque;
-use std::fmt;
-use std::str::FromStr;
 use std::time::Duration;
 
+pub use mode::{InvalidMode, Mode};
 pub use piece::{ActivePiece, Piece};
 use rand::seq::SliceRandom;
 use rand_philox::Philox;
@@ -17,82 +17,7 @@ pub const HEIGHT: usize = 40;
 pub const HIDDEN: usize = 20;
 pub const VISIBLE_HEIGHT: usize = HEIGHT - HIDDEN;
 const LOCK_DELAY: Duration = Duration::from_millis(500);
-const ULTRA_LIMIT: Duration = Duration::from_secs(120);
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub enum Mode {
-    #[default]
-    Marathon,
-    Sprint,
-    Ultra,
-}
-
-impl Mode {
-    pub const ALL: [Self; 3] = [Self::Marathon, Self::Sprint, Self::Ultra];
-
-    pub fn cycle(self, delta: i32) -> Self {
-        let current = match self {
-            Self::Marathon => 0,
-            Self::Sprint => 1,
-            Self::Ultra => 2,
-        };
-        match (current + delta).rem_euclid(3) {
-            0 => Self::Marathon,
-            1 => Self::Sprint,
-            _ => Self::Ultra,
-        }
-    }
-}
-
-impl fmt::Display for Mode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Marathon => "marathon",
-            Self::Sprint => "sprint",
-            Self::Ultra => "ultra",
-        })
-    }
-}
-
-impl FromStr for Mode {
-    type Err = InvalidMode;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "marathon" => Ok(Self::Marathon),
-            "sprint" => Ok(Self::Sprint),
-            "ultra" => Ok(Self::Ultra),
-            _ => Err(InvalidMode),
-        }
-    }
-}
-
-/// A mode name was rejected; use `marathon`, `sprint`, or `ultra`.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("expected marathon, sprint, or ultra")]
-pub struct InvalidMode;
-
-#[derive(Clone, Copy, Debug)]
-pub struct Rules {
-    pub start_level: u32,
-    pub max_level: u32,
-    pub end_on_max_level: bool,
-}
-
-impl Default for Rules {
-    fn default() -> Self {
-        Self {
-            start_level: 1,
-            max_level: 20,
-            end_on_max_level: false,
-        }
-    }
-}
-
-/// Game creation rejected the level range; for example, level zero is invalid.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("levels must satisfy 1 <= start level <= maximum level <= 20")]
-pub struct InvalidLevel;
+const BLITZ_LIMIT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
@@ -127,11 +52,11 @@ pub struct Game {
     queue: VecDeque<Piece>,
     rng: Philox,
     mode: Mode,
-    rules: Rules,
     score: u64,
     scoring: Scoring,
     last_move: LastMove,
     lines: u32,
+    practice_resets: u32,
     elapsed: Duration,
     gravity_elapsed: Duration,
     grounded_elapsed: Duration,
@@ -143,10 +68,7 @@ pub struct Game {
 }
 
 impl Game {
-    pub fn new(mode: Mode, rules: Rules, seed: u64) -> Result<Self, InvalidLevel> {
-        if rules.start_level == 0 || rules.start_level > rules.max_level || rules.max_level > 20 {
-            return Err(InvalidLevel);
-        }
+    pub fn new(mode: Mode, seed: u64) -> Self {
         let mut game = Self {
             board: [[None; WIDTH]; HEIGHT],
             active: ActivePiece::spawn(Piece::I),
@@ -155,11 +77,11 @@ impl Game {
             queue: VecDeque::new(),
             rng: Philox::from_u64_seed(seed),
             mode,
-            rules,
             score: 0,
             scoring: Scoring::default(),
             last_move: LastMove::Translation,
             lines: 0,
+            practice_resets: 0,
             elapsed: Duration::ZERO,
             gravity_elapsed: Duration::ZERO,
             grounded_elapsed: Duration::ZERO,
@@ -170,7 +92,7 @@ impl Game {
             status: Status::Playing,
         };
         game.spawn_next(false);
-        Ok(game)
+        game
     }
 
     pub fn board(&self) -> &[[Option<Piece>; WIDTH]; HEIGHT] {
@@ -206,11 +128,11 @@ impl Game {
     }
 
     pub fn level(&self) -> u32 {
-        (self.rules.start_level + self.lines / 10).min(self.rules.max_level)
+        self.mode.level(self.lines)
     }
 
-    pub fn start_level(&self) -> u32 {
-        self.rules.start_level
+    pub fn practice_resets(&self) -> u32 {
+        self.practice_resets
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -232,8 +154,8 @@ impl Game {
         }
     }
 
-    pub fn remaining(&self) -> Duration {
-        ULTRA_LIMIT.saturating_sub(self.elapsed)
+    pub fn remaining(&self) -> Option<Duration> {
+        (self.mode == Mode::Blitz).then(|| BLITZ_LIMIT.saturating_sub(self.elapsed))
     }
 
     pub fn ghost(&self) -> ActivePiece {
@@ -282,18 +204,19 @@ impl Game {
             Action::Hold => self.hold(),
         }
         self.update_lock(Duration::ZERO);
+        self.recover_practice();
     }
 
     pub fn advance(&mut self, mut duration: Duration) {
         // Small steps preserve gravity/lock ordering after a slow frame, e.g. a resize.
         while !duration.is_zero() && self.status == Status::Playing {
             let mut step = duration.min(Duration::from_millis(10));
-            if self.mode == Mode::Ultra {
-                step = step.min(self.remaining());
+            if self.mode == Mode::Blitz {
+                step = step.min(BLITZ_LIMIT.saturating_sub(self.elapsed));
             }
             self.elapsed += step;
             duration = duration.saturating_sub(step);
-            if self.mode == Mode::Ultra && self.elapsed >= ULTRA_LIMIT {
+            if self.mode == Mode::Blitz && self.elapsed >= BLITZ_LIMIT {
                 self.status = Status::Complete;
                 break;
             }
@@ -321,6 +244,19 @@ impl Game {
             }
         }
         self.update_lock(step);
+        self.recover_practice();
+    }
+
+    fn recover_practice(&mut self) {
+        if self.mode == Mode::Practice && self.status == Status::TopOut {
+            // Keep session statistics and the seeded bag sequence, e.g. after a failed hold.
+            self.board = [[None; WIDTH]; HEIGHT];
+            self.held = None;
+            self.scoring = Scoring::default();
+            self.practice_resets += 1;
+            self.status = Status::Playing;
+            self.spawn_next(false);
+        }
     }
 
     fn reset_lock_at_new_low(&mut self) {
@@ -343,8 +279,7 @@ impl Game {
     }
 
     fn gravity_interval(&self) -> Duration {
-        let level = f64::from(self.level() - 1);
-        let seconds = (0.8 - level * 0.007).powf(level).max(0.001);
+        let seconds = self.mode.gravity_seconds(self.level());
         Duration::from_secs_f64(if self.soft_drop {
             seconds / 20.0
         } else {
@@ -404,6 +339,8 @@ impl Game {
 
     fn rotate(&mut self, delta: u8) {
         if self.active.kind == Piece::O {
+            self.moved(self.active);
+            self.last_move = LastMove::Rotation { kick: 0 };
             return;
         }
         let rotation = (self.active.rotation + delta) % 4;
@@ -516,11 +453,7 @@ impl Game {
             .award(spin, cleared, self.level(), perfect_clear)
             .points;
         self.lines += cleared;
-        if (self.mode == Mode::Sprint && self.lines >= 40)
-            || (self.mode == Mode::Marathon
-                && self.rules.end_on_max_level
-                && self.level() >= self.rules.max_level)
-        {
+        if self.mode == Mode::FortyLines && self.lines >= 40 {
             self.status = Status::Complete;
         } else if locked_out && cleared == 0 {
             self.status = Status::TopOut;
@@ -533,8 +466,18 @@ impl Game {
         let LastMove::Rotation { kick } = self.last_move else {
             return Spin::None;
         };
+        let immobile = self.mode != Mode::Blitz
+            && [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .into_iter()
+                .all(|(dx, dy)| {
+                    !self.fits(ActivePiece {
+                        x: self.active.x + dx,
+                        y: self.active.y + dy,
+                        ..self.active
+                    })
+                });
         if self.active.kind != Piece::T {
-            return Spin::None;
+            return if immobile { Spin::Mini } else { Spin::None };
         }
         let ActivePiece { x, y, rotation, .. } = self.active;
         let corners = [
@@ -544,7 +487,7 @@ impl Game {
             self.occupied(x + 2, y + 2),
         ];
         if corners.into_iter().filter(|&occupied| occupied).count() < 3 {
-            return Spin::None;
+            return if immobile { Spin::Mini } else { Spin::None };
         }
         let [top_left, top_right, bottom_left, bottom_right] = corners;
         let front_filled = match rotation {
