@@ -20,8 +20,8 @@ Requires Rust 1.95 or newer and an interactive terminal of at least **80 columns
 | Key           | During play                                             |
 | ------------- | ------------------------------------------------------- |
 | ← / →         | Move left / right; terminal/OS repeat applies           |
-| Z / Ctrl      | Rotate counterclockwise with SRS kicks                  |
-| ↑ / X         | Rotate clockwise with SRS kicks                         |
+| Z / Ctrl      | Rotate counterclockwise with SRS+ kicks                 |
+| ↑ / X         | Rotate clockwise with SRS+ kicks                        |
 | A             | Rotate 180 degrees with TETR.IO kicks                    |
 | Space         | Hard drop and lock                                      |
 | ↓             | Soft drop while held; legacy terminals: one cell/event |
@@ -29,7 +29,7 @@ Requires Rust 1.95 or newer and an interactive terminal of at least **80 columns
 | Esc           | Pause / resume                                          |
 | ?             | Show controls and pause                                 |
 
-The main keyboard bindings follow [TETR.IO's Guideline controls](https://tetr.io/); 180-degree kicks follow [osk's published diagram](https://tetris.wiki/images/5/52/TETR.IO_180kicks.png). Standalone Ctrl/Shift and key releases require terminal support; the runtime requests the enhanced keyboard protocol and focus events. On terminals without release events, Down moves one cell per press or OS repeat, without latching soft drop. Pause, help, and focus loss clear held soft drop. Horizontal repeat still follows the terminal/OS; TETR.IO's DAS/ARR settings and numpad-specific aliases are not implemented. The existing 90-degree SRS and scoring rules remain in use.
+The main keyboard bindings follow [TETR.IO's Guideline controls](https://tetr.io/). Rotation uses SRS+ with [osk's I-piece kick order](https://tetris.wiki/images/7/7d/TETR.IO_SRS%2Bkicks.png) and [180-degree kicks](https://tetris.wiki/images/5/52/TETR.IO_180kicks.png); other pieces retain their 90-degree SRS kicks. This changes some I-spin outcomes from the previous SRS behavior. Standalone Ctrl/Shift and key releases require terminal support; the runtime requests the enhanced keyboard protocol and focus events. On terminals without release events, Down moves one cell per press or OS repeat, without latching soft drop. Pause, help, and focus loss clear held soft drop. Horizontal repeat still follows the terminal/OS; TETR.IO's DAS/ARR settings and numpad-specific aliases are not implemented. Scoring rules remain in use.
 
 This replaces the old WASD/QE bindings and soft-drop toggle. Remove an existing `[keys]` table to adopt the new defaults, or copy the updated `config.example.toml`. Old overrides can conflict with new defaults (for example, old `left = ["a"]` conflicts with `rotate_180 = ["a"]`); rebind both actions to keep a custom layout. The engine API replaces `Action::ToggleSoftDrop` with `Action::SoftDrop` (one cell) and `Game::set_soft_drop(bool)` (held state).
 
@@ -45,7 +45,9 @@ Menu and records navigation uses arrow keys, Enter, and Escape. To exit, return 
 | Save failure      | The result stays open; R retries with the same game ID, avoiding duplicate records                                             |
 | Interrupted games | Returning to the menu from pause abandons the active game; no save-game/resume or input replay                                 |
 
-The engine implements seven-bag generation with Philox, hold, ghost, gravity, soft/hard drops, a 500 ms lock delay with at most 15 movement resets, line clears, and level progression.
+The engine implements seven-bag generation with Philox, hold, ghost, gravity, soft/hard drops, line clears, and level progression. Lock delay is 500 ms: after first contact, successful moves and rotations use a 15-action budget, including while airborne after leaving a surface. Reaching a new lowest row restores the budget and timer; returning to an earlier height does not. Exhausting the budget locks immediately on contact.
+
+The board has 20 visible rows and 20 hidden rows. Pieces spawn above the visible board and descend one row immediately only if that row is free; a blocked descent alone is not game over. [Clutch Clears](https://tetr.io/about/patchnotes/#chlog_BETA_1_5_0) forgive locking entirely above the visible board when lines are cleared, and lift the next piece to the first free spawn position if the stack blocks its normal position. The rescue applies only to the next piece after a line clear, not to holds, and cannot push cells above the hidden buffer. Without a line clear, spawn overlap or locking entirely above the visible board ends the game. Engine consumers should use `HIDDEN` and `VISIBLE_HEIGHT` to select visible rows: `Game::board()` now returns 40 rows instead of 22, and active-piece coordinates include the expanded hidden region.
 
 | Scoring action                     | Base points before level multiplier                                       |
 | ---------------------------------- | ------------------------------------------------------------------------- |

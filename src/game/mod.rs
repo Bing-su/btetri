@@ -13,8 +13,8 @@ use scoring::Scoring;
 pub use scoring::{ScoreEvent, Spin};
 
 pub const WIDTH: usize = 10;
-pub const HEIGHT: usize = 22;
-pub const HIDDEN: usize = 2;
+pub const HEIGHT: usize = 40;
+pub const HIDDEN: usize = 20;
 pub const VISIBLE_HEIGHT: usize = HEIGHT - HIDDEN;
 const LOCK_DELAY: Duration = Duration::from_millis(500);
 const ULTRA_LIMIT: Duration = Duration::from_secs(120);
@@ -136,6 +136,8 @@ pub struct Game {
     gravity_elapsed: Duration,
     grounded_elapsed: Duration,
     lock_resets: u8,
+    lowest_y: i32,
+    lock_started: bool,
     soft_drop: bool,
     status: Status,
 }
@@ -162,10 +164,12 @@ impl Game {
             gravity_elapsed: Duration::ZERO,
             grounded_elapsed: Duration::ZERO,
             lock_resets: 0,
+            lowest_y: 0,
+            lock_started: false,
             soft_drop: false,
             status: Status::Playing,
         };
-        game.spawn_next();
+        game.spawn_next(false);
         Ok(game)
     }
 
@@ -260,6 +264,7 @@ impl Game {
                 };
                 if self.fits(candidate) {
                     self.active = candidate;
+                    self.reset_lock_at_new_low();
                     self.last_move = LastMove::Translation;
                     self.score += 1;
                 }
@@ -276,6 +281,7 @@ impl Game {
             }
             Action::Hold => self.hold(),
         }
+        self.update_lock(Duration::ZERO);
     }
 
     pub fn advance(&mut self, mut duration: Duration) {
@@ -308,14 +314,29 @@ impl Game {
                 break;
             }
             self.active = lowered;
+            self.reset_lock_at_new_low();
             self.last_move = LastMove::Translation;
             if self.soft_drop {
                 self.score += 1;
             }
         }
-        if self.grounded() {
-            self.grounded_elapsed += step;
-            if self.grounded_elapsed >= LOCK_DELAY {
+        self.update_lock(step);
+    }
+
+    fn reset_lock_at_new_low(&mut self) {
+        // Only a new lowest row restores the budget, e.g. falling back after an upward kick does not.
+        if self.active.y > self.lowest_y {
+            self.lowest_y = self.active.y;
+            self.grounded_elapsed = Duration::ZERO;
+            self.lock_resets = 0;
+        }
+    }
+
+    fn update_lock(&mut self, elapsed: Duration) {
+        if self.status == Status::Playing && self.grounded() {
+            self.lock_started = true;
+            self.grounded_elapsed += elapsed;
+            if self.lock_resets >= 15 || self.grounded_elapsed >= LOCK_DELAY {
                 self.lock();
             }
         }
@@ -334,12 +355,10 @@ impl Game {
     fn occupied(&self, x: i32, y: i32) -> bool {
         if x < 0
             || x >= i32::try_from(WIDTH).unwrap_or_default()
+            || y < 0
             || y >= i32::try_from(HEIGHT).unwrap_or_default()
         {
             return true;
-        }
-        if y < 0 {
-            return false;
         }
         usize::try_from(y)
             .ok()
@@ -363,11 +382,13 @@ impl Game {
     }
 
     fn moved(&mut self, candidate: ActivePiece) {
-        if self.grounded() && self.lock_resets < 15 {
+        self.lock_started |= self.grounded();
+        if self.lock_started && self.lock_resets < 15 {
             self.grounded_elapsed = Duration::ZERO;
             self.lock_resets += 1;
         }
         self.active = candidate;
+        self.reset_lock_at_new_low();
     }
 
     fn shift(&mut self, x: i32) {
@@ -414,34 +435,57 @@ impl Game {
         }
         let old = self.active.kind;
         if let Some(held) = self.held {
-            self.spawn(held);
+            self.spawn(held, false);
         } else {
-            self.spawn_next();
+            self.spawn_next(false);
         }
         self.held = Some(old);
         self.hold_available = false;
     }
 
-    fn spawn_next(&mut self) {
+    fn spawn_next(&mut self, clutch_clear: bool) {
         if self.queue.len() <= 7 {
             let mut bag = Piece::ALL;
             bag.shuffle(&mut self.rng);
             self.queue.extend(bag);
         }
         if let Some(kind) = self.queue.pop_front() {
-            self.spawn(kind);
+            self.spawn(kind, clutch_clear);
         }
     }
 
-    fn spawn(&mut self, kind: Piece) {
+    fn spawn(&mut self, kind: Piece, clutch_clear: bool) {
         self.active = ActivePiece::spawn(kind);
+        // A line clear earns a higher spawn, e.g. when the stack still blocks the normal cells.
+        while clutch_clear && !self.fits(self.active) {
+            let raised = ActivePiece {
+                y: self.active.y - 1,
+                ..self.active
+            };
+            if raised.cells().iter().any(|&(_, y)| y < 0) {
+                break;
+            }
+            self.active = raised;
+        }
         self.last_move = LastMove::Translation;
         self.gravity_elapsed = Duration::ZERO;
         self.grounded_elapsed = Duration::ZERO;
         self.lock_resets = 0;
+        self.lowest_y = self.active.y;
+        self.lock_started = false;
         self.hold_available = true;
         if !self.fits(self.active) {
             self.status = Status::TopOut;
+        } else {
+            // A blocked initial descent keeps the piece above the skyline, e.g. on a high stack.
+            let lowered = ActivePiece {
+                y: self.active.y + 1,
+                ..self.active
+            };
+            if self.fits(lowered) {
+                self.active = lowered;
+                self.lowest_y = self.active.y;
+            }
         }
     }
 
@@ -478,10 +522,10 @@ impl Game {
                 && self.level() >= self.rules.max_level)
         {
             self.status = Status::Complete;
-        } else if locked_out {
+        } else if locked_out && cleared == 0 {
             self.status = Status::TopOut;
         } else {
-            self.spawn_next();
+            self.spawn_next(cleared > 0);
         }
     }
 

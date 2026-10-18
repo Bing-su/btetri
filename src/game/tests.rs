@@ -23,7 +23,7 @@ fn clears_rows_and_scores_before_level_change(#[case] rows: usize, #[case] score
     game.active = ActivePiece {
         kind: Piece::I,
         x: 2,
-        y: 18,
+        y: 36,
         rotation: 1,
     };
     assert!(game.fits(game.active));
@@ -71,7 +71,7 @@ fn grounded_piece_waits_half_second() {
         kind: Piece::O,
         rotation: 0,
         x: 3,
-        y: 20,
+        y: 38,
     };
     game.advance(Duration::from_millis(499));
     assert!(game.board.iter().flatten().all(Option::is_none));
@@ -87,15 +87,16 @@ fn grounded_piece_waits_half_second() {
 }
 
 #[test]
-fn extended_lock_delay_stops_resetting_after_fifteen_moves() {
+fn fifteenth_grounded_move_locks_immediately() {
     let mut game = game();
     game.active = ActivePiece {
         kind: Piece::O,
         rotation: 0,
         x: 3,
-        y: 20,
+        y: 38,
     };
-    for index in 0..15 {
+    game.lowest_y = game.active.y;
+    for index in 0..14 {
         game.advance(Duration::from_millis(400));
         game.apply(if index % 2 == 0 {
             Action::Left
@@ -104,9 +105,8 @@ fn extended_lock_delay_stops_resetting_after_fifteen_moves() {
         });
     }
     assert!(game.board.iter().flatten().all(Option::is_none));
-    game.advance(Duration::from_millis(400));
+    assert_eq!(game.lock_resets, 14);
     game.apply(Action::Right);
-    game.advance(Duration::from_millis(100));
     assert_eq!(
         game.board
             .iter()
@@ -134,6 +134,132 @@ fn srs_rotates_i_off_left_wall() {
 }
 
 #[rstest]
+#[case(false)]
+#[case(true)]
+fn falling_to_a_new_low_restores_the_lock_budget(#[case] soft_drop: bool) {
+    let mut game = game();
+    game.active = ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: 3,
+        y: 30,
+    };
+    game.lowest_y = game.active.y;
+    game.board[32][4] = Some(Piece::J);
+    game.lock_resets = 14;
+    game.lock_started = true;
+    game.grounded_elapsed = Duration::from_millis(400);
+
+    // Leaving the ledge spends the final move, but cannot lock a piece in midair.
+    game.apply(Action::Right);
+    assert_eq!(game.lock_resets, 15);
+    assert!(!game.grounded());
+    if soft_drop {
+        game.apply(Action::SoftDrop);
+    } else {
+        game.gravity_elapsed = game
+            .gravity_interval()
+            .checked_sub(Duration::from_millis(10))
+            .unwrap();
+        game.advance(Duration::from_millis(10));
+    }
+    assert_eq!(game.active.y, 31);
+    assert_eq!(game.lowest_y, 31);
+    assert_eq!(game.lock_resets, 0);
+    assert_eq!(game.grounded_elapsed, Duration::ZERO);
+
+    // Descending restores the budget, but does not erase the earlier surface contact.
+    game.apply(Action::Right);
+    assert_eq!(game.lock_resets, 1);
+}
+
+#[test]
+fn returning_to_the_same_height_with_no_moves_left_locks_immediately() {
+    let mut game = game();
+    game.active = ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: 3,
+        y: 30,
+    };
+    game.lowest_y = game.active.y;
+    game.board[32][4] = Some(Piece::J);
+    game.lock_started = true;
+    game.lock_resets = 14;
+    game.apply(Action::Right);
+    assert_eq!(game.lock_resets, 15);
+    assert_eq!(game.board[30][4], None);
+    game.apply(Action::Left);
+    assert_eq!(game.board[30][4], Some(Piece::O));
+    assert_eq!(game.board[31][5], Some(Piece::O));
+}
+
+#[test]
+fn falling_back_to_an_old_low_does_not_restore_moves_or_time() {
+    let mut game = game();
+    game.active = ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: 3,
+        y: 31,
+    };
+    game.lowest_y = 32;
+    game.board[34][4] = Some(Piece::J);
+    game.lock_started = true;
+    game.lock_resets = 14;
+    game.grounded_elapsed = Duration::from_millis(400);
+    game.apply(Action::SoftDrop);
+    assert_eq!(game.active.y, 32);
+    assert_eq!(game.lock_resets, 14);
+    assert_eq!(game.grounded_elapsed, Duration::from_millis(400));
+    game.advance(Duration::from_millis(100));
+    assert_eq!(game.board[32][4], Some(Piece::O));
+}
+
+#[test]
+fn floor_kicks_spend_the_lock_budget_but_blocked_moves_do_not() {
+    let mut game = game();
+    game.active = ActivePiece {
+        kind: Piece::T,
+        rotation: 0,
+        x: 0,
+        y: 38,
+    };
+    game.lowest_y = game.active.y;
+    game.lock_resets = 14;
+    game.apply(Action::Left);
+    assert_eq!(game.lock_resets, 14);
+    assert!(game.board.iter().flatten().all(Option::is_none));
+    game.apply(Action::Clockwise);
+    assert_eq!(
+        game.board
+            .iter()
+            .flatten()
+            .filter(|cell| cell.is_some())
+            .count(),
+        4
+    );
+}
+
+#[test]
+fn leaving_a_surface_starts_counting_airborne_moves_without_a_clock_tick() {
+    let mut game = game();
+    game.active = ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: 3,
+        y: 30,
+    };
+    game.lowest_y = game.active.y;
+    game.board[32][4] = Some(Piece::J);
+    game.apply(Action::Right);
+    assert!(!game.grounded());
+    assert_eq!(game.lock_resets, 1);
+    game.apply(Action::Right);
+    assert_eq!(game.lock_resets, 2);
+}
+
+#[rstest]
 fn half_turn_rotates_directly_and_returns_after_two_turns(
     #[values(Piece::I, Piece::T, Piece::S, Piece::Z, Piece::J, Piece::L)] kind: Piece,
     #[values(0, 1, 2, 3)] rotation: u8,
@@ -153,6 +279,40 @@ fn half_turn_rotates_directly_and_returns_after_two_turns(
     assert_eq!(game.active, before);
 }
 
+#[rstest]
+#[case(0, Action::Clockwise, &[(5, 25)], (1, 0))]
+#[case(0, Action::CounterClockwise, &[(3, 27), (4, 25), (6, 25)], (2, 1))]
+#[case(1, Action::CounterClockwise, &[(2, 26), (6, 26)], (-1, 2))]
+#[case(3, Action::CounterClockwise, &[(1, 27), (5, 27)], (1, -2))]
+fn srs_plus_i_spins_choose_the_published_kick_order(
+    #[case] rotation: u8,
+    #[case] action: Action,
+    #[case] blocks: &[(usize, usize)],
+    #[case] offset: (i32, i32),
+) {
+    let mut game = game();
+    game.active = ActivePiece {
+        kind: Piece::I,
+        rotation,
+        x: 3,
+        y: 25,
+    };
+    for &(x, y) in blocks {
+        game.board[y][x] = Some(Piece::J);
+    }
+    assert!(game.fits(game.active));
+    game.apply(action);
+    assert_eq!(
+        (game.active.x, game.active.y),
+        (3 + offset.0, 25 + offset.1)
+    );
+    assert_eq!(
+        game.active.rotation,
+        (rotation + if action == Action::Clockwise { 1 } else { 3 }) % 4
+    );
+    assert!(game.fits(game.active));
+}
+
 #[test]
 fn half_turn_kicks_off_floor_and_keeps_o_stable() {
     let mut game = game();
@@ -160,11 +320,11 @@ fn half_turn_kicks_off_floor_and_keeps_o_stable() {
         kind: Piece::T,
         rotation: 0,
         x: 3,
-        y: 20,
+        y: 38,
     };
     game.apply(Action::Rotate180);
     assert_eq!(game.active.rotation, 2);
-    assert_eq!(game.active.y, 19);
+    assert_eq!(game.active.y, 37);
     assert!(game.fits(game.active));
     game.active = ActivePiece::spawn(Piece::O);
     let before = game.active;
@@ -198,9 +358,177 @@ fn soft_drop_steps_scores_and_held_state_is_idempotent() {
 #[test]
 fn spawn_collision_ends_game() {
     let mut game = game();
-    game.board[2] = [Some(Piece::O); WIDTH];
-    game.spawn(Piece::T);
+    game.board[HIDDEN - 1] = [Some(Piece::O); WIDTH];
+    game.spawn(Piece::T, false);
     assert_eq!(game.status(), Status::TopOut);
+}
+
+#[rstest]
+fn spawn_descends_only_when_the_next_row_is_free(
+    #[values(Piece::I, Piece::O, Piece::T, Piece::S, Piece::Z, Piece::J, Piece::L)] kind: Piece,
+    #[values(false, true)] blocked: bool,
+    #[values(false, true)] from_hold: bool,
+) {
+    let mut game = game();
+    if blocked {
+        game.board[HIDDEN][4] = Some(Piece::J);
+    }
+    if from_hold {
+        game.held = Some(kind);
+        game.apply(Action::Hold);
+    } else {
+        game.spawn(kind, false);
+    }
+    let initial = ActivePiece::spawn(kind);
+    assert_eq!(game.status(), Status::Playing);
+    assert_eq!(game.active.kind, kind);
+    assert_eq!(game.active.y, initial.y + i32::from(!blocked));
+    assert!(
+        initial
+            .cells()
+            .iter()
+            .all(|&(_, y)| y < i32::try_from(HIDDEN).unwrap())
+    );
+    assert_eq!(game.lowest_y, game.active.y);
+    assert_eq!(game.lock_resets, 0);
+}
+
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn locking_above_the_skyline_requires_a_visible_cell(#[case] fully_hidden: bool) {
+    let mut game = game();
+    let hidden = i32::try_from(HIDDEN).unwrap();
+    game.active = ActivePiece {
+        kind: Piece::I,
+        rotation: 1,
+        x: -2,
+        y: hidden - if fully_hidden { 4 } else { 3 },
+    };
+    let cells = game.active.cells();
+    game.board[if fully_hidden { HIDDEN } else { HIDDEN + 1 }][0] = Some(Piece::J);
+    game.apply(Action::HardDrop);
+    for (x, y) in cells {
+        assert_eq!(
+            game.board[usize::try_from(y).unwrap()][usize::try_from(x).unwrap()],
+            Some(Piece::I)
+        );
+    }
+    assert_eq!(
+        game.status(),
+        if fully_hidden {
+            Status::TopOut
+        } else {
+            Status::Playing
+        }
+    );
+}
+
+#[test]
+fn the_buffer_has_a_ceiling() {
+    let game = game();
+    assert!(!game.fits(ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: 3,
+        y: -1
+    }));
+    assert_eq!(game.board().len(), 40);
+    assert_eq!(VISIBLE_HEIGHT, 20);
+}
+
+#[rstest]
+#[case(false)]
+#[case(true)]
+fn only_a_line_clear_rescues_the_next_blocked_spawn(#[case] clear: bool) {
+    let mut game = game();
+    game.board[39] = [Some(Piece::J); WIDTH];
+    game.board[39][0] = None;
+    game.board[39][1] = None;
+    if !clear {
+        game.board[39][2] = None;
+    }
+    game.board[if clear { 18 } else { 19 }][4] = Some(Piece::J);
+    game.active = ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: -1,
+        y: 38,
+    };
+    game.queue.clear();
+    game.queue.push_back(Piece::T);
+    game.apply(Action::HardDrop);
+    assert_eq!(game.lines(), u32::from(clear));
+    assert_eq!(
+        game.status(),
+        if clear {
+            Status::Playing
+        } else {
+            Status::TopOut
+        }
+    );
+    assert_eq!(game.active.y, if clear { 17 } else { 18 });
+    if clear {
+        assert!(game.fits(game.active));
+        assert_eq!(game.lowest_y, 17);
+        assert_eq!(game.lock_resets, 0);
+        // The previous clear must not rescue a later hold into the same blocked spawn.
+        game.held = Some(Piece::T);
+        game.apply(Action::Hold);
+        assert_eq!(game.status(), Status::TopOut);
+    }
+}
+
+#[test]
+fn a_line_clear_forgives_locking_entirely_above_the_skyline() {
+    let mut game = game();
+    game.board[18] = [Some(Piece::J); WIDTH];
+    game.board[18][0..4].fill(None);
+    game.board[19][0] = Some(Piece::J);
+    game.active = ActivePiece {
+        kind: Piece::I,
+        rotation: 0,
+        x: 0,
+        y: 17,
+    };
+    game.queue.clear();
+    game.queue.push_back(Piece::T);
+    game.apply(Action::HardDrop);
+    assert_eq!(game.lines(), 1);
+    assert_eq!(game.status(), Status::Playing);
+    assert!(game.fits(game.active));
+}
+
+#[rstest]
+#[case(Piece::I, Status::Playing, -1)]
+#[case(Piece::T, Status::TopOut, 0)]
+fn clutch_clear_cannot_push_cells_above_the_buffer(
+    #[case] next: Piece,
+    #[case] status: Status,
+    #[case] spawn_y: i32,
+) {
+    let mut game = game();
+    for row in game.board.iter_mut().take(HIDDEN) {
+        row[3..7].fill(Some(Piece::J));
+    }
+    game.board[39] = [Some(Piece::J); WIDTH];
+    game.board[39][0..2].fill(None);
+    game.active = ActivePiece {
+        kind: Piece::O,
+        rotation: 0,
+        x: -1,
+        y: 38,
+    };
+    game.queue.clear();
+    game.queue.push_back(next);
+    game.apply(Action::HardDrop);
+    assert_eq!(game.lines(), 1);
+    assert_eq!(game.status(), status);
+    assert_eq!(game.active.y, spawn_y);
+    assert!(game.active.cells().iter().all(|&(_, y)| y >= 0));
+    if status == Status::Playing {
+        assert!(game.fits(game.active));
+    }
 }
 
 #[test]
@@ -216,13 +544,13 @@ fn ultra_finishes_at_exactly_two_minutes() {
 fn sprint_finishes_after_fortieth_line() {
     let mut game = Game::new(Mode::Sprint, Rules::default(), 42).unwrap();
     game.lines = 39;
-    game.board[21] = [Some(Piece::J); WIDTH];
-    game.board[21][4] = None;
+    game.board[39] = [Some(Piece::J); WIDTH];
+    game.board[39][4] = None;
     game.active = ActivePiece {
         kind: Piece::I,
         rotation: 1,
         x: 2,
-        y: 18,
+        y: 36,
     };
     game.apply(Action::HardDrop);
     assert_eq!(game.lines(), 40);
@@ -236,22 +564,22 @@ fn spin_slot(spin: Spin, lines: usize) -> Game {
         kind: Piece::T,
         rotation: 1,
         x: 3,
-        y: 19,
+        y: 37,
     };
-    for (x, y) in [(3, 19), (3, 21)] {
+    for (x, y) in [(3, 37), (3, 39)] {
         game.board[y][x] = Some(Piece::J);
     }
-    let third_corner = if spin == Spin::Full { (5, 21) } else { (5, 19) };
+    let third_corner = if spin == Spin::Full { (5, 39) } else { (5, 37) };
     game.board[third_corner.1][third_corner.0] = Some(Piece::J);
     if lines >= 1 {
-        game.board[20] = [Some(Piece::J); WIDTH];
+        game.board[38] = [Some(Piece::J); WIDTH];
         for x in 3..=5 {
-            game.board[20][x] = None;
+            game.board[38][x] = None;
         }
     }
     if lines >= 2 {
-        game.board[21] = [Some(Piece::J); WIDTH];
-        game.board[21][4] = None;
+        game.board[39] = [Some(Piece::J); WIDTH];
+        game.board[39][4] = None;
     }
     assert!(game.fits(game.active));
     game.apply(Action::Clockwise);
@@ -302,21 +630,21 @@ fn fifth_srs_kick_scores_triple_and_promotes_mini(
     #[case] points: u64,
 ) {
     let mut game = game();
-    for y in 18..=20 {
+    for y in 36..=38 {
         game.board[y] = [Some(Piece::J); WIDTH];
         game.board[y][4] = None;
     }
-    game.board[19][5] = None;
-    game.board[21][4] = Some(Piece::J);
-    game.board[16][4] = Some(Piece::J);
+    game.board[37][5] = None;
+    game.board[39][4] = Some(Piece::J);
+    game.board[34][4] = Some(Piece::J);
     if open_front {
-        game.board[20][5] = None;
+        game.board[38][5] = None;
     }
     game.active = ActivePiece {
         kind: Piece::T,
         rotation: 0,
         x: 4,
-        y: 16,
+        y: 34,
     };
     assert!(game.fits(game.active));
     game.apply(Action::Clockwise);
@@ -326,7 +654,7 @@ fn fifth_srs_kick_scores_triple_and_promotes_mini(
             kind: Piece::T,
             rotation: 1,
             x: 3,
-            y: 18
+            y: 36
         }
     );
     game.apply(Action::HardDrop);
@@ -347,20 +675,20 @@ fn spin_uses_the_level_before_crossing_ten_lines() {
 #[test]
 fn fourth_srs_kick_keeps_a_mini_double_as_mini() {
     let mut game = game();
-    for y in 18..=20 {
+    for y in 36..=38 {
         game.board[y] = [Some(Piece::J); WIDTH];
         game.board[y][4] = None;
     }
-    game.board[19][5] = None;
-    game.board[20][5] = None;
-    game.board[21][4] = Some(Piece::J);
-    game.board[16][3] = Some(Piece::J);
-    game.board[16][4] = Some(Piece::J);
+    game.board[37][5] = None;
+    game.board[38][5] = None;
+    game.board[39][4] = Some(Piece::J);
+    game.board[34][3] = Some(Piece::J);
+    game.board[34][4] = Some(Piece::J);
     game.active = ActivePiece {
         kind: Piece::T,
         rotation: 2,
         x: 3,
-        y: 16,
+        y: 34,
     };
     assert!(game.fits(game.active));
     game.apply(Action::CounterClockwise);
@@ -370,7 +698,7 @@ fn fourth_srs_kick_keeps_a_mini_double_as_mini() {
             kind: Piece::T,
             rotation: 1,
             x: 3,
-            y: 18
+            y: 36
         }
     );
     game.apply(Action::HardDrop);
@@ -382,12 +710,12 @@ fn fourth_srs_kick_keeps_a_mini_double_as_mini() {
 #[test]
 fn wall_and_floor_count_as_spin_corners() {
     let mut wall = game();
-    wall.board[20][1] = Some(Piece::J);
+    wall.board[38][1] = Some(Piece::J);
     wall.active = ActivePiece {
         kind: Piece::T,
         rotation: 0,
         x: 0,
-        y: 18,
+        y: 36,
     };
     wall.apply(Action::Clockwise);
     assert_eq!(wall.active.x, -1);
@@ -396,16 +724,16 @@ fn wall_and_floor_count_as_spin_corners() {
     assert_eq!(wall.score(), 100);
 
     let mut floor = game();
-    floor.board[20][3] = Some(Piece::J);
-    floor.board[20][6] = Some(Piece::J);
+    floor.board[38][3] = Some(Piece::J);
+    floor.board[38][6] = Some(Piece::J);
     floor.active = ActivePiece {
         kind: Piece::T,
         rotation: 1,
         x: 3,
-        y: 19,
+        y: 37,
     };
     floor.apply(Action::CounterClockwise);
-    assert_eq!(floor.active.y, 20);
+    assert_eq!(floor.active.y, 38);
     floor.apply(Action::HardDrop);
     assert_eq!(floor.last_score().unwrap().spin, Spin::Mini);
     assert_eq!(floor.score(), 100);
@@ -414,7 +742,7 @@ fn wall_and_floor_count_as_spin_corners() {
 #[test]
 fn fewer_than_three_corners_does_not_score_a_spin() {
     let mut game = spin_slot(Spin::Full, 0);
-    game.board[19][3] = None;
+    game.board[37][3] = None;
     game.apply(Action::HardDrop);
     assert_eq!(game.last_score().unwrap().spin, Spin::None);
     assert_eq!(game.score(), 0);
@@ -450,7 +778,7 @@ fn locks_keep_scoring_chains_and_exclude_drop_points_from_b2b() {
             kind: Piece::I,
             rotation: 1,
             x: 2,
-            y: 17,
+            y: 35,
         };
         let drop_points = 2;
         total_drop_points += drop_points;
@@ -472,25 +800,25 @@ fn perfect_clear_slot(lines: usize) -> Game {
             kind: Piece::I,
             rotation: 0,
             x: 3,
-            y: 20,
+            y: 38,
         },
         2 => ActivePiece {
             kind: Piece::O,
             rotation: 0,
             x: 3,
-            y: 20,
+            y: 38,
         },
         3 => ActivePiece {
             kind: Piece::T,
             rotation: 1,
             x: 3,
-            y: 19,
+            y: 37,
         },
         _ => ActivePiece {
             kind: Piece::I,
             rotation: 1,
             x: 2,
-            y: 18,
+            y: 36,
         },
     };
     for row in game.board.iter_mut().rev().take(lines) {
@@ -524,7 +852,7 @@ fn perfect_clear_awards_bonus_at_level_before_line_removal(
 
 #[test]
 fn hidden_or_visible_remaining_blocks_prevent_perfect_clear() {
-    for row in [0, 10] {
+    for row in [0, HIDDEN + 8] {
         let mut game = perfect_clear_slot(1);
         game.board[row][0] = Some(Piece::J);
         game.apply(Action::HardDrop);
@@ -558,14 +886,14 @@ fn b2b_perfect_clear_adds_3200_and_combo_without_multiplying_the_bonus() {
 fn moving_down_after_rotation_cancels_spin_and_spawn_does_not_inherit_it() {
     for hard_drop in [false, true] {
         let mut falling = game();
-        for (x, y) in [(3, 19), (3, 21), (5, 21)] {
+        for (x, y) in [(3, 37), (3, 39), (5, 39)] {
             falling.board[y][x] = Some(Piece::J);
         }
         falling.active = ActivePiece {
             kind: Piece::T,
             rotation: 0,
             x: 3,
-            y: 17,
+            y: 35,
         };
         falling.apply(Action::Clockwise);
         if !hard_drop {
@@ -576,12 +904,12 @@ fn moving_down_after_rotation_cancels_spin_and_spawn_does_not_inherit_it() {
         assert_eq!(falling.score(), if hard_drop { 4 } else { 0 });
     }
     let mut spawned = spin_slot(Spin::Full, 0);
-    spawned.spawn(Piece::T);
+    spawned.spawn(Piece::T, false);
     spawned.active = ActivePiece {
         kind: Piece::T,
         rotation: 2,
         x: 3,
-        y: 19,
+        y: 37,
     };
     spawned.apply(Action::HardDrop);
     assert_eq!(spawned.last_score().unwrap().spin, Spin::None);
@@ -593,7 +921,7 @@ proptest! {
         let mut game = Game::new(Mode::Marathon, Rules::default(), seed).unwrap();
         for _ in 0..10 {
             let mut bag = Vec::new();
-            for _ in 0..7 { bag.push(game.active.kind); game.spawn_next(); }
+            for _ in 0..7 { bag.push(game.active.kind); game.spawn_next(false); }
             for piece in Piece::ALL { prop_assert_eq!(bag.iter().filter(|&&actual| actual == piece).count(), 1); }
         }
     }

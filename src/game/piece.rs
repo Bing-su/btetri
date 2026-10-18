@@ -49,12 +49,13 @@ pub struct ActivePiece {
 }
 
 impl ActivePiece {
+    /// Start above the visible board; `Game` then descends one row if it is free.
     pub fn spawn(kind: Piece) -> Self {
         Self {
             kind,
             rotation: 0,
             x: 3,
-            y: 1,
+            y: i32::try_from(super::HIDDEN).unwrap_or_default() - 2,
         }
     }
 
@@ -75,13 +76,18 @@ pub(super) fn half_turn_kicks(from: u8) -> &'static [(i32, i32)] {
     }
 }
 
-// SRS offsets use screen coordinates: e.g. an upward kick has a negative y.
+// SRS+ uses screen coordinates; preserve osk's test order so mirrored I-spins agree.
+// Reference: https://tetris.wiki/images/7/7d/TETR.IO_SRS%2Bkicks.png
 pub(super) fn kicks(kind: Piece, from: u8, to: u8) -> [(i32, i32); 5] {
     if kind == Piece::I {
         match (from, to) {
-            (0, 1) | (3, 2) => [(0, 0), (-2, 0), (1, 0), (-2, 1), (1, -2)],
-            (1, 0) | (2, 3) => [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
-            (1, 2) | (0, 3) => [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
+            (0, 1) => [(0, 0), (1, 0), (-2, 0), (-2, 1), (1, -2)],
+            (0, 3) => [(0, 0), (-1, 0), (2, 0), (2, 1), (-1, -2)],
+            (1, 0) => [(0, 0), (-1, 0), (2, 0), (-1, 2), (2, -1)],
+            (1, 2) => [(0, 0), (-1, 0), (2, 0), (-1, -2), (2, 1)],
+            (2, 1) => [(0, 0), (-2, 0), (1, 0), (-2, -1), (1, 2)],
+            (2, 3) => [(0, 0), (2, 0), (-1, 0), (2, -1), (-1, 2)],
+            (3, 2) => [(0, 0), (1, 0), (-2, 0), (1, -2), (-2, 1)],
             _ => [(0, 0), (1, 0), (-2, 0), (1, 2), (-2, -1)],
         }
     } else {
