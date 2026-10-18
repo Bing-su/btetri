@@ -178,6 +178,16 @@ impl Store {
         Ok(())
     }
 
+    pub fn personal_best(&self, current: &Record) -> miette::Result<Option<Record>> {
+        let mode = current.mode.parse::<Mode>().into_diagnostic()?;
+        // Exclude this run even on a query retry after saving; unfinished sprints have no PB time.
+        Ok(self.records(mode)?.into_iter().find(|row| {
+            row.id != current.id
+                && row.player == current.player
+                && (mode != Mode::FortyLines || row.outcome == "complete")
+        }))
+    }
+
     pub fn records(&self, mode: Mode) -> miette::Result<Vec<Record>> {
         if mode == Mode::Practice {
             return Err(miette::miette!("practice has no ranked records"));
@@ -236,6 +246,65 @@ fn rank_records(mode: Mode, a: &Record, b: &Record) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case(Mode::FortyLines)]
+    #[case(Mode::Blitz)]
+    fn personal_best_filters_player_mode_current_run_and_unfinished_sprints(#[case] mode: Mode) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("records.db");
+        let store = Store::open(&path).unwrap();
+        let current = Record::from_game(&Game::new(mode, 42), "Alice").unwrap();
+        assert_eq!(store.personal_best(&current).unwrap(), None);
+        store.save(&current).unwrap();
+        let best = Record {
+            id: "best".into(),
+            elapsed_ms: 60000,
+            score: 1000,
+            outcome: "complete".into(),
+            ..current.clone()
+        };
+        for record in [
+            best.clone(),
+            Record {
+                id: "slower".into(),
+                elapsed_ms: 90000,
+                score: 500,
+                ..best.clone()
+            },
+            Record {
+                id: "other-player".into(),
+                player: "Bob".into(),
+                elapsed_ms: 1,
+                score: 9999,
+                ..best.clone()
+            },
+            Record {
+                id: "other-mode".into(),
+                mode: if mode == Mode::Blitz { "40l" } else { "blitz" }.into(),
+                elapsed_ms: 1,
+                score: 9999,
+                ..best.clone()
+            },
+        ] {
+            store.save(&record).unwrap();
+        }
+        if mode == Mode::FortyLines {
+            store
+                .save(&Record {
+                    id: "partial".into(),
+                    outcome: "top_out".into(),
+                    lines: 39,
+                    elapsed_ms: 1,
+                    ..best.clone()
+                })
+                .unwrap();
+        }
+        assert_eq!(store.personal_best(&current).unwrap(), Some(best.clone()));
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.personal_best(&current).unwrap(), Some(best));
+    }
 
     #[test]
     fn settings_survive_reopen_and_failed_writes_roll_back() {

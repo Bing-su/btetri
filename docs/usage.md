@@ -47,6 +47,22 @@ Practice resets the board, hold, and scoring chains; score, lines, elapsed time,
 | Modifier keys   | Standalone Ctrl/Shift require terminal support; Ctrl+C holds by default                        |
 | Focus / dialogs | Focus loss, pause, and help clear held movement and soft drop                                  |
 
+## Results
+
+| Feature             | Contents / controls                                                                                                                  |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| End-of-game summary | Score, cleared lines, and elapsed time after top-out or completion                                                                   |
+| STATISTICS          | Separate screen opened from the result menu; Esc or Enter returns to the summary                                                     |
+| Pieces placed       | Counts locked pieces, including the final lock; hold and an unplaced active piece do not count                                       |
+| PPS                 | Pieces placed divided by active play time in seconds; zero when no time has elapsed                                                  |
+| Personal best       | Previous records for the exact same player name and mode, excluding the current run                                                  |
+| 40 LINES comparison | Previous fastest completed run; signed time difference after completion (negative is faster); unfinished runs cannot set a best time |
+| BLITZ comparison    | Previous highest score, including top-outs; signed score difference (positive is higher)                                             |
+| Query failure       | Statistics remain available; R retries loading the previous best                                                                     |
+| Save failure        | Statistics remain available; return to the summary and press R to retry saving before leaving the result                             |
+
+Piece count and PPS are available for the current result only. Existing stored records and settings keep their format; PRACTICE continues through automatic resets without an end-of-game screen.
+
 ## Settings
 
 Open SETTINGS from the menu. Changes remain a draft until saved.

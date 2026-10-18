@@ -1,6 +1,7 @@
 mod gameplay;
 mod records;
 mod settings;
+mod statistics;
 
 use std::time::Duration;
 
@@ -39,6 +40,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
         }
         Screen::Records => records::draw(frame, shell, app),
         Screen::Settings => settings::draw(frame, shell, app),
+        Screen::Statistics => statistics::draw(frame, shell, app),
     }
     if matches!(app.screen, Screen::Help(_)) {
         help(frame, shell, app);
@@ -300,9 +302,10 @@ mod tests {
     #[rstest::rstest]
     #[case(Screen::Paused, 0, vec!["RESUME", "MAIN MENU"])]
     #[case(Screen::Paused, 1, vec!["RESUME", "MAIN MENU"])]
-    #[case(Screen::GameOver, 0, vec!["PLAY AGAIN", "RECORDS", "MAIN MENU"])]
-    #[case(Screen::GameOver, 1, vec!["PLAY AGAIN", "RECORDS", "MAIN MENU"])]
-    #[case(Screen::GameOver, 2, vec!["PLAY AGAIN", "RECORDS", "MAIN MENU"])]
+    #[case(Screen::GameOver, 0, vec!["PLAY AGAIN", "STATISTICS", "RECORDS", "MAIN MENU"])]
+    #[case(Screen::GameOver, 1, vec!["PLAY AGAIN", "STATISTICS", "RECORDS", "MAIN MENU"])]
+    #[case(Screen::GameOver, 2, vec!["PLAY AGAIN", "STATISTICS", "RECORDS", "MAIN MENU"])]
+    #[case(Screen::GameOver, 3, vec!["PLAY AGAIN", "STATISTICS", "RECORDS", "MAIN MENU"])]
     fn dialog_choices_share_a_label_column(
         #[case] screen: Screen,
         #[case] selected: usize,

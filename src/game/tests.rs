@@ -84,6 +84,7 @@ fn practice_recovers_from_topout_without_losing_session_totals(
     let mut game = Game::new(Mode::Practice, 42);
     game.score = 123;
     game.lines = 42;
+    game.pieces = 7;
     game.elapsed = Duration::from_secs(150);
     game.board = [[Some(Piece::J); WIDTH]; HEIGHT];
     for (x, y) in game.active.cells() {
@@ -109,6 +110,7 @@ fn practice_recovers_from_topout_without_losing_session_totals(
     assert_eq!(game.practice_resets(), 1);
     assert!(game.board().iter().flatten().all(Option::is_none));
     assert_eq!(game.lines(), 42);
+    assert_eq!(game.pieces(), if action == Action::Hold { 7 } else { 8 });
     assert!(game.score() >= 123);
     assert_eq!(game.elapsed(), elapsed);
     assert_eq!(game.held(), None);
@@ -120,6 +122,34 @@ fn practice_recovers_from_topout_without_losing_session_totals(
 
 fn game() -> Game {
     Game::new(Mode::FortyLines, 42)
+}
+
+#[rstest]
+fn pieces_count_locks_not_inputs(#[values(false, true)] timed: bool) {
+    let mut game = game();
+    assert_eq!(game.pieces(), 0);
+    game.apply(Action::Hold);
+    game.apply(Action::Hold);
+    game.apply(Action::Left);
+    game.apply(Action::Clockwise);
+    assert_eq!(game.pieces(), 0);
+    if timed {
+        game.active = game.ghost();
+        game.advance(LOCK_DELAY);
+    } else {
+        game.apply(Action::HardDrop);
+    }
+    assert_eq!(game.pieces(), 1);
+    while game.status() == Status::Playing {
+        let before = game.pieces();
+        game.apply(Action::HardDrop);
+        assert_eq!(game.pieces(), before + 1);
+    }
+    let final_count = game.pieces();
+    game.apply(Action::HardDrop);
+    game.advance(Duration::from_secs(10));
+    assert_eq!(game.pieces(), final_count);
+    assert_eq!(Game::new(Mode::FortyLines, 42).pieces(), 0);
 }
 
 #[rstest]

@@ -335,35 +335,26 @@ fn result_dialog(frame: &mut Frame<'_>, area: Rect, game: &Game, app: &App) {
         _ => "Saving record...",
     };
     let mut lines = vec![
-        Line::from(""),
         Line::from(if game.status() == Status::Complete {
             "COMPLETE"
         } else {
             "GAME OVER"
         }),
         Line::from(""),
-        Line::from(if game.mode() == Mode::FortyLines {
-            "FINAL TIME"
-        } else {
-            "FINAL SCORE"
-        })
-        .style(Style::default().fg(app.config.theme.muted)),
-        Line::from(if game.mode() == Mode::FortyLines {
-            format_duration(game.elapsed())
-        } else {
-            format!("{:06}", game.score())
-        }),
+        Line::from(format!("SCORE {:06}", game.score())),
+        Line::from(format!("LINES {}", game.lines())),
+        Line::from(format!("TIME {}", format_duration(game.elapsed()))),
         Line::from(""),
         Line::from(save).style(Style::default().fg(app.config.theme.muted)),
         Line::from(""),
     ];
-    for (index, label) in ["PLAY AGAIN", "RECORDS", "MAIN MENU"]
+    for (index, label) in ["PLAY AGAIN", "STATISTICS", "RECORDS", "MAIN MENU"]
         .into_iter()
         .enumerate()
     {
         lines.push(focused(
             label,
-            app.dialog_selection == index && matches!(app.save, SaveState::Saved),
+            app.dialog_selection == index && (index == 1 || matches!(app.save, SaveState::Saved)),
             app,
         ));
     }
@@ -375,7 +366,7 @@ fn result_dialog(frame: &mut Frame<'_>, area: Rect, game: &Game, app: &App) {
                 .centered()
                 .wrap(Wrap { trim: true })
                 .style(Style::default().fg(app.config.theme.muted)),
-            Rect::new(inner.x, inner.y + 12, inner.width, inner.height - 12),
+            Rect::new(inner.x, inner.y + 13, inner.width, inner.height - 13),
         );
     }
 }

@@ -34,6 +34,7 @@ proptest! {
             prop_assert_eq!(first.score(), second.score());
             prop_assert_eq!(first.last_score(), second.last_score());
             prop_assert_eq!(first.lines(), second.lines());
+            prop_assert_eq!(first.pieces(), second.pieces());
             prop_assert_eq!(first.level(), second.level());
             prop_assert_eq!(first.practice_resets(), second.practice_resets());
             prop_assert_eq!(first.elapsed(), second.elapsed());

@@ -36,6 +36,7 @@ pub enum Screen {
     Help(HelpReturn),
     Paused,
     GameOver,
+    Statistics,
     Records,
     Settings,
 }
@@ -117,6 +118,13 @@ pub enum RecordsState {
     Failed(String),
 }
 
+#[derive(Debug)]
+pub enum PersonalBest {
+    Requested,
+    Loaded(Option<Record>),
+    Failed(String),
+}
+
 impl RecordsState {
     pub fn rows(&self) -> &[Record] {
         match self {
@@ -138,6 +146,7 @@ pub struct App {
     pub(crate) record: Option<Record>,
     pub(crate) save: SaveState,
     pub(crate) records: RecordsState,
+    pub(crate) personal_best: PersonalBest,
     pub(crate) record_mode: Mode,
     pub(crate) record_selection: usize,
     records_back: Screen,
@@ -169,6 +178,7 @@ impl TryFrom<Config> for App {
             record: None,
             save: SaveState::None,
             records: RecordsState::Loaded(Vec::new()),
+            personal_best: PersonalBest::Loaded(None),
             record_mode: Mode::FortyLines,
             record_selection: 0,
             records_back: Screen::Menu,
@@ -189,6 +199,7 @@ impl App {
         self.pressed_actions.clear();
         self.game = Some(Game::new(self.config.mode, rand::random()));
         self.record = None;
+        self.personal_best = PersonalBest::Loaded(None);
         self.save = SaveState::None;
         self.screen = Screen::Playing;
         self.dialog_selection = 0;
@@ -242,6 +253,14 @@ impl App {
                         SaveState::Failed(format!("Save failed: {error:#}. Select SAVE to retry."));
                 }
             }
+        }
+        if matches!(self.personal_best, PersonalBest::Requested)
+            && let Some(record) = &self.record
+        {
+            self.personal_best = match store.personal_best(record) {
+                Ok(best) => PersonalBest::Loaded(best),
+                Err(error) => PersonalBest::Failed(format!("{error:#}")),
+            };
         }
         if matches!(self.save, SaveState::Pending)
             && let Some(record) = &self.record
@@ -337,6 +356,7 @@ impl App {
         {
             self.record = Some(Record::from_game(game, &self.config.player)?);
             self.save = SaveState::Pending;
+            self.personal_best = PersonalBest::Requested;
             self.screen = Screen::GameOver;
             self.dialog_selection = 0;
             self.clear_held_keys();
@@ -385,6 +405,19 @@ impl App {
             }
             return Ok(());
         }
+        if matches!(self.screen, Screen::GameOver | Screen::Statistics)
+            && matches!(key.code, KeyCode::Enter | KeyCode::Esc)
+        {
+            if key.kind == KeyEventKind::Repeat
+                || self.keyboard_releases && self.pressed_actions.contains(&key.code)
+            {
+                return Ok(());
+            }
+            // Keep a held Enter from opening and then closing statistics, even on repeated Press.
+            if self.keyboard_releases {
+                self.pressed_actions.push(key.code);
+            }
+        }
         match self.screen {
             Screen::Menu => self.menu_key(key),
             Screen::Playing => self.playing_key(key)?,
@@ -398,6 +431,13 @@ impl App {
             }
             Screen::Paused => self.pause_key(key),
             Screen::GameOver => self.result_key(key),
+            Screen::Statistics => match key.code {
+                KeyCode::Esc | KeyCode::Enter => self.screen = Screen::GameOver,
+                KeyCode::Char('r') if matches!(self.personal_best, PersonalBest::Failed(_)) => {
+                    self.personal_best = PersonalBest::Requested;
+                }
+                _ => {}
+            },
             Screen::Records => self.records_key(key),
             Screen::Settings => self.settings_key(key),
         }
@@ -620,8 +660,12 @@ impl App {
             return;
         }
         match key.code {
-            KeyCode::Up => self.dialog_selection = (self.dialog_selection + 2) % 3,
-            KeyCode::Down => self.dialog_selection = (self.dialog_selection + 1) % 3,
+            KeyCode::Up => self.dialog_selection = (self.dialog_selection + 3) % 4,
+            KeyCode::Down => self.dialog_selection = (self.dialog_selection + 1) % 4,
+            KeyCode::Enter if self.dialog_selection == 1 => {
+                self.screen = Screen::Statistics;
+                self.notice = None;
+            }
             KeyCode::Enter | KeyCode::Esc if !matches!(self.save, SaveState::Saved) => {
                 self.notice =
                     Some("Keep this result open until saved. R retries a failed save.".into());
@@ -629,7 +673,7 @@ impl App {
             KeyCode::Esc => self.return_to_menu(),
             KeyCode::Enter => match self.dialog_selection {
                 0 => self.start(),
-                1 => self.open_records(self.config.mode),
+                2 => self.open_records(self.config.mode),
                 _ => self.return_to_menu(),
             },
             _ => {}
@@ -1443,6 +1487,121 @@ mod tests {
         app.save = Ok(()).into();
         app.key(key(KeyCode::Enter)).unwrap();
         assert_eq!(app.screen, Screen::Playing);
+    }
+
+    #[test]
+    fn statistics_keep_the_unsaved_result_and_return_to_the_summary() {
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.config.mode = Mode::Blitz;
+        app.start();
+        app.advance(Duration::from_secs(120)).unwrap();
+        let record = app.record.clone();
+        // A random stack can top out early; statistics must preserve the actual finish time.
+        let elapsed = app.game.as_ref().unwrap().elapsed();
+        app.save = SaveState::Failed("disk full".into());
+        app.key(key(KeyCode::Down)).unwrap();
+        app.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(app.screen, Screen::Statistics);
+        app.advance(Duration::from_secs(30)).unwrap();
+        app.key(key(KeyCode::Esc)).unwrap();
+        assert_eq!(app.screen, Screen::GameOver);
+        assert_eq!(app.record, record);
+        assert_eq!(app.game.as_ref().unwrap().elapsed(), elapsed);
+        app.key(key(KeyCode::Down)).unwrap();
+        app.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(app.screen, Screen::GameOver);
+        app.save = SaveState::Saved;
+        app.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(app.screen, Screen::Records);
+        app.key(key(KeyCode::Esc)).unwrap();
+        app.key(key(KeyCode::Down)).unwrap();
+        app.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(app.screen, Screen::Menu);
+    }
+
+    #[rstest::rstest]
+    fn result_navigation_waits_for_a_fresh_press(
+        #[values(false, true)] keyboard_releases: bool,
+        #[values(KeyCode::Enter, KeyCode::Esc)] back: KeyCode,
+    ) {
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.keyboard_releases = keyboard_releases;
+        app.config.mode = Mode::Blitz;
+        app.start();
+        app.advance(Duration::from_secs(120)).unwrap();
+        app.save = SaveState::Saved;
+        app.key(key(KeyCode::Down)).unwrap();
+        app.key(key(KeyCode::Enter)).unwrap();
+        let repeated = |code| {
+            KeyEvent::new_with_kind(
+                code,
+                KeyModifiers::NONE,
+                if keyboard_releases {
+                    KeyEventKind::Press
+                } else {
+                    KeyEventKind::Repeat
+                },
+            )
+        };
+        app.key(repeated(KeyCode::Enter)).unwrap();
+        assert_eq!(app.screen, Screen::Statistics);
+        release(&mut app, KeyCode::Enter);
+        app.key(key(back)).unwrap();
+        assert_eq!(app.screen, Screen::GameOver);
+        app.key(repeated(back)).unwrap();
+        assert_eq!(app.screen, Screen::GameOver);
+        release(&mut app, back);
+        app.key(key(back)).unwrap();
+        assert_eq!(
+            app.screen,
+            if back == KeyCode::Enter {
+                Screen::Statistics
+            } else {
+                Screen::Menu
+            }
+        );
+    }
+
+    #[test]
+    fn previous_best_survives_saving_and_query_retries_exclude_the_current_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("records.db");
+        let store = Store::open(&path).unwrap();
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.config.mode = Mode::Blitz;
+        app.start();
+        app.key(key(KeyCode::Char(' '))).unwrap();
+        app.advance(Duration::from_secs(120)).unwrap();
+        let previous = Record {
+            id: "previous".into(),
+            score: 0,
+            ..app.record.clone().unwrap()
+        };
+        store.save(&previous).unwrap();
+        app.process_storage(&store);
+        assert!(
+            matches!(&app.personal_best, PersonalBest::Loaded(Some(best)) if best == &previous)
+        );
+        app.process_storage(&store);
+        assert!(
+            matches!(&app.personal_best, PersonalBest::Loaded(Some(best)) if best == &previous)
+        );
+        db.execute("ALTER TABLE game_records RENAME TO unavailable", [])
+            .unwrap();
+        app.personal_best = PersonalBest::Requested;
+        app.process_storage(&store);
+        assert!(matches!(app.personal_best, PersonalBest::Failed(_)));
+        db.execute("ALTER TABLE unavailable RENAME TO game_records", [])
+            .unwrap();
+        app.screen = Screen::Statistics;
+        app.key(key(KeyCode::Char('r'))).unwrap();
+        app.process_storage(&store);
+        assert!(
+            matches!(&app.personal_best, PersonalBest::Loaded(Some(best)) if best == &previous)
+        );
+        app.start();
+        assert!(matches!(app.personal_best, PersonalBest::Loaded(None)));
     }
 
     #[test]

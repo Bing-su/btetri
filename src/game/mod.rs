@@ -56,6 +56,7 @@ pub struct Game {
     scoring: Scoring,
     last_move: LastMove,
     lines: u32,
+    pieces: u64,
     practice_resets: u32,
     elapsed: Duration,
     gravity_elapsed: Duration,
@@ -82,6 +83,7 @@ impl Game {
             scoring: Scoring::default(),
             last_move: LastMove::Translation,
             lines: 0,
+            pieces: 0,
             practice_resets: 0,
             elapsed: Duration::ZERO,
             gravity_elapsed: Duration::ZERO,
@@ -127,6 +129,11 @@ impl Game {
 
     pub fn lines(&self) -> u32 {
         self.lines
+    }
+
+    /// Locked pieces in this session; for example, holding a piece does not count.
+    pub fn pieces(&self) -> u64 {
+        self.pieces
     }
 
     pub fn level(&self) -> u32 {
@@ -463,6 +470,7 @@ impl Game {
                 return;
             }
         }
+        self.pieces += 1;
         let cleared = self.clear_lines();
         let perfect_clear = cleared > 0 && self.board.iter().flatten().all(Option::is_none);
         self.score += self
