@@ -8,10 +8,7 @@ use crate::game::Mode;
 #[derive(Debug, Cli)]
 #[usage(bin = "btetri", version = env!("CARGO_PKG_VERSION"))]
 pub struct Options {
-    /// Read settings from this TOML file.
-    #[usage(long, global)]
-    pub config: Option<PathBuf>,
-    /// Store local records in this database file.
+    /// Store local records and settings in this database file.
     #[usage(long, global)]
     pub db: Option<PathBuf>,
     #[usage(subcommand)]
@@ -62,6 +59,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_modes_and_bad_levels() {
+        Options::parse_from(&[OsStr::new("--config"), OsStr::new("old.toml")]).unwrap_err();
         Options::parse_from(&[OsStr::new("play"), OsStr::new("unknown")]).unwrap_err();
         Options::parse_from(&[
             OsStr::new("play"),

@@ -1,40 +1,37 @@
 use ratatui::style::Color;
-use serde::Deserialize;
 
-use super::deserialize_from_str;
 use crate::game::Piece;
 
 // Resolve the palette at load time so rendering cannot silently replace invalid colors.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+
 pub struct Theme {
-    #[serde(deserialize_with = "deserialize_from_str")]
     pub background: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub foreground: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub muted: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub border: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub accent: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub grid: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub ghost: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub i: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub o: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub t: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub s: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub z: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub j: Color,
-    #[serde(deserialize_with = "deserialize_from_str")]
+
     pub l: Color,
 }
 
@@ -60,6 +57,51 @@ impl Default for Theme {
 }
 
 impl Theme {
+    pub fn entries(&self) -> Vec<(&'static str, String)> {
+        [
+            ("theme.background", self.background.to_string()),
+            ("theme.foreground", self.foreground.to_string()),
+            ("theme.muted", self.muted.to_string()),
+            ("theme.border", self.border.to_string()),
+            ("theme.accent", self.accent.to_string()),
+            ("theme.grid", self.grid.to_string()),
+            ("theme.ghost", self.ghost.to_string()),
+            ("theme.i", self.i.to_string()),
+            ("theme.o", self.o.to_string()),
+            ("theme.t", self.t.to_string()),
+            ("theme.s", self.s.to_string()),
+            ("theme.z", self.z.to_string()),
+            ("theme.j", self.j.to_string()),
+            ("theme.l", self.l.to_string()),
+        ]
+        .into()
+    }
+
+    pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
+        let color = value
+            .parse::<Color>()
+            .map_err(|error| format!("{error}; use a color name, #RRGGBB, or 0–255"))?;
+        let target = match name {
+            "theme.background" => &mut self.background,
+            "theme.foreground" => &mut self.foreground,
+            "theme.muted" => &mut self.muted,
+            "theme.border" => &mut self.border,
+            "theme.accent" => &mut self.accent,
+            "theme.grid" => &mut self.grid,
+            "theme.ghost" => &mut self.ghost,
+            "theme.i" => &mut self.i,
+            "theme.o" => &mut self.o,
+            "theme.t" => &mut self.t,
+            "theme.s" => &mut self.s,
+            "theme.z" => &mut self.z,
+            "theme.j" => &mut self.j,
+            "theme.l" => &mut self.l,
+            _ => return Err(format!("unknown theme setting {name}")),
+        };
+        *target = color;
+        Ok(())
+    }
+
     pub fn piece(&self, piece: Piece) -> Color {
         match piece {
             Piece::I => self.i,

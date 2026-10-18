@@ -8,7 +8,7 @@ cargo run -- play 40l --name Alice
 cargo run -- play blitz
 cargo run -- play practice
 cargo run -- records 40l
-cargo run -- --config ./config.example.toml --db ./records.db
+cargo run -- --db ./records.db
 ```
 
 Requires Rust 1.95 or newer and an interactive terminal of at least **80 columns × 28 rows**. The application name is omitted from the TUI. The selected designs are in `design/`; layout uses real terminal cells, including two character columns per board square. Key hints use compact brackets, such as `[Enter]`.
@@ -23,7 +23,7 @@ BLITZ starts at level 1. Each level requires `ceil(2.1 × level)` additional lin
 
 PRACTICE is a local training mode: top-out clears the board, hold, and scoring chains while preserving total score, lines, elapsed time, and the seeded bag sequence. The sidebar counts resets. It does not implement TETR.IO ZEN's persistence or progression.
 
-Breaking configuration change: `marathon`, `sprint`, `ultra`, `--level`, `start_level`, `max_level`, and `end_on_max_level` are removed. Update existing TOML files using `config.example.toml`. Old database rows remain unchanged and are excluded from the new modes' rankings; historical scores are never recalculated.
+Breaking configuration change: `marathon`, `sprint`, `ultra`, `--level`, `start_level`, `max_level`, and `end_on_max_level` are removed. Previous database formats are discarded rather than imported.
 
 | Key           | During play                                             |
 | ------------- | ------------------------------------------------------- |
@@ -39,14 +39,18 @@ Breaking configuration change: `marathon`, `sprint`, `ultra`, `--level`, `start_
 
 The main keyboard bindings follow [TETR.IO's Guideline controls](https://tetr.io/). Rotation uses SRS+ with [osk's I-piece kick order](https://tetris.wiki/images/7/7d/TETR.IO_SRS%2Bkicks.png) and [180-degree kicks](https://tetris.wiki/images/5/52/TETR.IO_180kicks.png); other pieces retain their 90-degree SRS kicks. This changes some I-spin outcomes from the previous SRS behavior. Standalone Ctrl/Shift and key releases require terminal support; the runtime requests the enhanced keyboard protocol and focus events. On terminals without release events, Down moves one cell per press or OS repeat, without latching soft drop. Pause, help, and focus loss clear held soft drop. Horizontal repeat still follows the terminal/OS; TETR.IO's DAS/ARR settings and numpad-specific aliases are not implemented.
 
-This replaces the old WASD/QE bindings and soft-drop toggle. Remove an existing `[keys]` table to adopt the new defaults, or copy the updated `config.example.toml`. Old overrides can conflict with new defaults (for example, old `left = ["a"]` conflicts with `rotate_180 = ["a"]`); rebind both actions to keep a custom layout. The engine API replaces `Action::ToggleSoftDrop` with `Action::SoftDrop` (one cell) and `Game::set_soft_drop(bool)` (held state).
+Key bindings can be changed in SETTINGS. Every action needs a binding, and duplicate assignments are rejected when saving; swap both actions before SAVE if necessary. The engine uses `Action::SoftDrop` (one cell) and `Game::set_soft_drop(bool)` (held state).
+
+Select SETTINGS in the main menu to edit player, mode, ghost visibility, preview count, keys, and all palette colors. Up/Down navigates and Home/End jumps to the first/last item. Left/Right changes mode, ghost, or preview count; Enter edits a value. Enter accepts the field, Esc cancels the field, and Delete clears it. Key names are comma-separated (e.g. `UP, X`, `C, SHIFT`, or `COMMA`); colors accept names, `#RRGGBB`, or indexes 0–255. Press F2 or select SAVE to commit the draft, or Esc outside a field to discard it. RESET DEFAULTS only resets the draft until saved. Save errors retain the draft for retry. Menu player/mode changes save automatically; R retries failures.
+
+TOML configuration files, `config.example.toml`, and `--config` are removed. Existing files are ignored and are not imported or deleted. Settings live in the same SQLite file as records, so `--db` selects both. The first launch uses defaults. CLI play arguments override the loaded settings for the session; an explicit settings save or menu change then persists the current choices.
 
 Menu and records navigation uses arrow keys, Enter, and Escape. To exit, return to the main menu and select QUIT. Ctrl+C follows the configured C binding during play (hold by default). In the menu, select PLAYER and press Enter to edit; Delete clears, Enter commits, and Escape cancels. In records, Left/Right changes mode and Up/Down or PageUp/PageDown browses. Resizing below the minimum pauses the game; resume explicitly after resizing.
 
 | Setting           | Behavior                                                                                                                       |
 | ----------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Configuration     | TOML, `config.example.toml` documents defaults; missing default file is allowed, explicitly requested missing files are errors |
-| Paths             | `directories::ProjectDirs` chooses OS-standard config/data directories; `--config` and `--db` override them                    |
+| Configuration     | SETTINGS edits a validated draft; SQLite transactions save all settings together |
+| Paths             | `directories::ProjectDirs` chooses the OS-standard data directory; `--db` overrides the database path |
 | Persistence       | Bundled SQLite through rusqlite; completed-game conditions, result, duration, and UTC completion time are stored               |
 | Shared database   | Multiple processes can open the same local DB; SQLite serializes writes, with a 5-second lock wait and retry on failure        |
 | Dates             | Displayed in the local timezone                                                                                                |
@@ -75,9 +79,9 @@ Under the T corner rule, a T-spin requires a last successful rotation and at lea
 
 Perfect-clear bonuses follow the [TETR.IO solo scoring table](https://tetris.wiki/TETR.IO#Solo): after a line clear, the entire board including hidden rows must be empty. Add 3500 to clear and combo points, multiply by the pre-clear level, and never multiply the bonus by B2B. Two consecutive perfect tetrises at level 1 award 4300, then 1200 + 3500 + 50 = 4750, excluding drop points.
 
-Terminal cleanup uses `scopeguard::defer!` to restore the terminal on scope exit, including error returns and unwinding panics. The runtime is synchronous: Crossterm polls input with a maximum 16 ms wait, and record operations finish before input handling continues. DB access occurs on result/records screens, outside active play; a slow disk or database lock can delay input on those screens. A pending result is saved before shutdown, including after a terminal error. If that save fails, the shutdown diagnostic includes the unsaved result together with any terminal error.
+Terminal cleanup uses `scopeguard::defer!` to restore the terminal on scope exit, including error returns and unwinding panics. The runtime is synchronous: Crossterm polls input with a maximum 16 ms wait, and database operations finish before input handling continues. DB access normally occurs on menu, settings, result, and records screens; a slow disk or database lock can delay input on those screens. Pending settings and results are saved before shutdown, including after a terminal error. If a save fails, the shutdown diagnostic includes every unsaved item together with any terminal error.
 
-The default CLI build compiles SQLite from bundled C sources and requires a C compiler; no separate SQLite installation is needed. Engine-only builds omit SQLite. Schema initialization uses a transaction and `PRAGMA user_version`; unsupported newer versions fail without replacing the data. The initial schema also accepts an existing `game_records` table and checks that the save statement can be prepared before play, rejecting missing columns or a missing unique ID without committing schema changes. No Turso-to-SQLite data conversion or cross-engine compatibility is guaranteed.
+The default CLI build compiles SQLite from bundled C sources and requires a C compiler; no separate SQLite installation is needed. Engine-only builds omit SQLite. One schema in `src/schema.sql` defines records and settings. On first open, database versions 0–2 have their records and settings tables replaced with schema version 3; old records and settings are deleted. Replacement is transactional. Reopening a version 3 database preserves its contents, and unsupported newer versions are rejected. Current-format tables are checked before play to reject missing columns or a missing unique ID. There is no import, migration, or downgrade support.
 
 ## Library usage
 
@@ -124,7 +128,8 @@ Breaking engine Interface changes: `Rules`, `InvalidLevel`, `Game::start_level()
 | `ui/records`     | Records table, selection visibility, and empty/error states              |
 | `storage`        | SQLite schema initialization, idempotent record writes, and ranking      |
 | `runtime`        | Terminal setup/cleanup, synchronous Crossterm polling, and game clock    |
-| `config` / `cli` | Validated TOML, diagnostics, paths, and usage-rs arguments               |
+| `config` / `cli` | Validated setting values, database path, and usage-rs arguments |
+| `app/settings` / `ui/settings` | Draft editing, validation, save/cancel, and scrolling settings screen |
 | `config/keys`    | Key parsing, matching, labels, and duplicate-binding validation          |
 | `config/theme`   | Terminal palette parsed into colors when configuration loads             |
 

@@ -7,13 +7,14 @@ use chrono::Utc;
 use miette::{IntoDiagnostic, WrapErr};
 use rusqlite::{Connection, OpenFlags, TransactionBehavior, params};
 
+use crate::config::Config;
 use crate::game::{Game, Mode, Status};
 
 const SAVE_RECORD: &str = "INSERT INTO game_records
-    (id, mode, player, start_level, level, lines, score, elapsed_ms, completed_at, outcome)
-    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+    (id, mode, player, level, lines, score, elapsed_ms, completed_at, outcome)
+    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
     ON CONFLICT(id) DO UPDATE SET
-    mode = excluded.mode, player = excluded.player, start_level = excluded.start_level,
+    mode = excluded.mode, player = excluded.player,
     level = excluded.level, lines = excluded.lines, score = excluded.score,
     elapsed_ms = excluded.elapsed_ms, completed_at = excluded.completed_at,
     outcome = excluded.outcome";
@@ -23,7 +24,6 @@ pub struct Record {
     pub id: String,
     pub mode: String,
     pub player: String,
-    pub start_level: i64,
     pub level: i64,
     pub lines: i64,
     pub score: i64,
@@ -41,8 +41,6 @@ impl Record {
             id: format!("{:032x}", rand::random::<u128>()),
             mode: game.mode().to_string(),
             player: player.to_owned(),
-            // Keep the legacy column intact so existing databases remain readable.
-            start_level: 1,
             level: i64::from(game.level()),
             lines: i64::from(game.lines()),
             score: game.score().try_into().into_diagnostic()?,
@@ -89,14 +87,19 @@ impl Store {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .into_diagnostic()?;
         match version {
-            0 => {
-                tx.execute_batch(include_str!("../migrations/001_records.sql"))
+            0..=2 => {
+                // Replace retired formats outright, e.g. discard their scores and settings together.
+                tx.execute_batch(
+                    "DROP TABLE IF EXISTS game_records; DROP TABLE IF EXISTS app_settings;",
+                )
+                .into_diagnostic()?;
+                tx.execute_batch(include_str!("schema.sql"))
                     .into_diagnostic()
                     .wrap_err("cannot initialize records schema")?;
-                tx.pragma_update(None, "user_version", 1)
+                tx.pragma_update(None, "user_version", 3)
                     .into_diagnostic()?;
             }
-            1 => {}
+            3 => {}
             _ => {
                 return Err(miette::miette!(
                     "unsupported records schema version {version}"
@@ -120,7 +123,6 @@ impl Store {
                     record.id,
                     record.mode,
                     record.player,
-                    record.start_level,
                     record.level,
                     record.lines,
                     record.score,
@@ -134,6 +136,48 @@ impl Store {
         Ok(())
     }
 
+    pub fn load_config(&self) -> miette::Result<Config> {
+        let mut config = Config::default();
+        let mut statement = self
+            .db
+            .prepare("SELECT name, value FROM app_settings")
+            .into_diagnostic()?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .into_diagnostic()?;
+        for row in rows {
+            let (name, value) = row.into_diagnostic()?;
+            config
+                .set(&name, &value)
+                .map_err(|error| miette::miette!("invalid saved setting {name}: {error}"))?;
+        }
+        config
+            .validate()
+            .map_err(|error| miette::miette!("invalid saved settings: {error}"))?;
+        Ok(config)
+    }
+
+    pub fn save_config(&self, config: &Config) -> miette::Result<()> {
+        config
+            .validate()
+            .map_err(|error| miette::miette!("{error}"))?;
+        // Commit one snapshot, e.g. a crash cannot save only half of a key swap.
+        let tx = self.db.unchecked_transaction().into_diagnostic()?;
+        tx.execute("DELETE FROM app_settings", [])
+            .into_diagnostic()?;
+        for (name, value) in config.entries() {
+            tx.execute(
+                "INSERT INTO app_settings (name, value) VALUES (?1, ?2)",
+                params![name, value],
+            )
+            .into_diagnostic()?;
+        }
+        tx.commit().into_diagnostic()?;
+        Ok(())
+    }
+
     pub fn records(&self, mode: Mode) -> miette::Result<Vec<Record>> {
         if mode == Mode::Practice {
             return Err(miette::miette!("practice has no ranked records"));
@@ -141,7 +185,7 @@ impl Store {
         let mut statement = self
             .db
             .prepare(
-                "SELECT id, mode, player, start_level, level, lines, score, elapsed_ms, completed_at,
+                "SELECT id, mode, player, level, lines, score, elapsed_ms, completed_at,
                  outcome FROM game_records WHERE mode = ?1",
             )
             .into_diagnostic()
@@ -152,13 +196,12 @@ impl Store {
                     id: row.get(0)?,
                     mode: row.get(1)?,
                     player: row.get(2)?,
-                    start_level: row.get(3)?,
-                    level: row.get(4)?,
-                    lines: row.get(5)?,
-                    score: row.get(6)?,
-                    elapsed_ms: row.get(7)?,
-                    completed_at: row.get(8)?,
-                    outcome: row.get(9)?,
+                    level: row.get(3)?,
+                    lines: row.get(4)?,
+                    score: row.get(5)?,
+                    elapsed_ms: row.get(6)?,
+                    completed_at: row.get(7)?,
+                    outcome: row.get(8)?,
                 })
             })
             .into_diagnostic()?
@@ -195,33 +238,76 @@ mod tests {
     use super::*;
 
     #[test]
-    fn retired_records_remain_unchanged_and_outside_new_rankings() {
+    fn settings_survive_reopen_and_failed_writes_roll_back() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("records.db");
+        let path = dir.path().join("settings.db");
         let store = Store::open(&path).unwrap();
-        let mut old = Record::from_game(&Game::new(Mode::FortyLines, 42), "Alice").unwrap();
-        for mode in ["marathon", "sprint", "ultra"] {
-            old.id = mode.into();
-            old.mode = mode.into();
-            old.score = 9876;
-            store.save(&old).unwrap();
+        assert_eq!(store.load_config().unwrap(), Config::default());
+        let mut config = Config::default();
+        for (name, value) in [
+            ("player", "테트리스"),
+            ("mode", "practice"),
+            ("ghost_enabled", "false"),
+            ("next_queue_length", "3"),
+            ("keys.left", "j, ß, COMMA"),
+            ("theme.i", "red"),
+            ("theme.background", "42"),
+        ] {
+            config.set(name, value).unwrap();
         }
+        store.save_config(&config).unwrap();
         drop(store);
         let store = Store::open(&path).unwrap();
-        for mode in [Mode::FortyLines, Mode::Blitz] {
-            assert!(store.records(mode).unwrap().is_empty());
-        }
-        let unchanged: u32 = store
+        assert_eq!(store.load_config().unwrap(), config);
+        store.db.execute_batch("CREATE TRIGGER fail_settings BEFORE INSERT ON app_settings WHEN NEW.name = 'theme.l' BEGIN SELECT RAISE(ABORT, 'full disk'); END;").unwrap();
+        store.save_config(&Config::default()).unwrap_err();
+        assert_eq!(store.load_config().unwrap(), config);
+    }
+
+    #[test]
+    fn invalid_settings_and_practice_records_are_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("settings.db")).unwrap();
+        let mut invalid = Config::default();
+        invalid.keys.left = invalid.keys.right.clone();
+        store.save_config(&invalid).unwrap_err();
+        assert_eq!(store.load_config().unwrap(), Config::default());
+        store
             .db
-            .query_row(
-                "SELECT COUNT(*) FROM game_records WHERE id = mode AND score = 9876",
+            .execute(
+                "INSERT INTO app_settings VALUES ('next_queue_length', '0')",
                 [],
-                |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(unchanged, 3);
+        store.load_config().unwrap_err();
         store.records(Mode::Practice).unwrap_err();
         Record::from_game(&Game::new(Mode::Practice, 42), "Alice").unwrap_err();
+    }
+
+    #[test]
+    fn retired_formats_are_replaced_once_and_new_data_survives_reopen() {
+        for version in 0..=2 {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("old.db");
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch("CREATE TABLE game_records (id TEXT); INSERT INTO game_records VALUES ('old'); CREATE TABLE app_settings (name TEXT, value TEXT); INSERT INTO app_settings VALUES ('player', 'OLD');").unwrap();
+            db.pragma_update(None, "user_version", version).unwrap();
+            drop(db);
+            let store = Store::open(&path).unwrap();
+            assert!(store.records(Mode::FortyLines).unwrap().is_empty());
+            assert_eq!(store.load_config().unwrap(), Config::default());
+            let record = Record::from_game(&Game::new(Mode::Blitz, 42), "NEW").unwrap();
+            store.save(&record).unwrap();
+            let config = Config {
+                player: "NEW".into(),
+                ..Config::default()
+            };
+            store.save_config(&config).unwrap();
+            drop(store);
+            let store = Store::open(&path).unwrap();
+            assert_eq!(store.records(Mode::Blitz).unwrap(), [record]);
+            assert_eq!(store.load_config().unwrap(), config);
+        }
     }
 
     #[test]
@@ -311,7 +397,6 @@ mod tests {
         );
         record.mode = "blitz".into();
         record.player = "Bob '테트리스'".into();
-        record.start_level = 2;
         record.level = 3;
         record.lines = 40;
         record.score = 12345;
@@ -347,27 +432,26 @@ mod tests {
     }
 
     #[test]
-    fn schema_initialization_is_transactional_and_rejects_future_versions() {
+    fn schema_replacement_is_transactional_and_rejects_future_versions() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("records.db");
         let db = Connection::open(&path).unwrap();
-        db.execute("CREATE TABLE game_records (id TEXT)", [])
+        db.execute_batch("CREATE TABLE game_records (id TEXT); INSERT INTO game_records VALUES ('existing'); CREATE VIEW app_settings AS SELECT 1;").unwrap();
+        db.pragma_update(None, "user_version", 2).unwrap();
+        Store::open(&path).err().unwrap();
+        let id: String = db
+            .query_row("SELECT id FROM game_records", [], |row| row.get(0))
             .unwrap();
-        assert!(Store::open(&path).is_err());
+        assert_eq!(id, "existing");
         let version: u32 = db
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
-        assert_eq!(version, 0);
-        db.execute("DROP TABLE game_records", []).unwrap();
+        assert_eq!(version, 2);
+        db.execute("DROP VIEW app_settings", []).unwrap();
         let store = Store::open(&path).unwrap();
-        let version: u32 = store
-            .db
-            .pragma_query_value(None, "user_version", |row| row.get(0))
-            .unwrap();
-        assert_eq!(version, 1);
         let record = Record::from_game(&Game::new(Mode::FortyLines, 1), "Alice").unwrap();
         store.save(&record).unwrap();
-        db.pragma_update(None, "user_version", 2).unwrap();
+        db.pragma_update(None, "user_version", 4).unwrap();
         assert!(Store::open(&path).is_err());
         assert_eq!(store.records(Mode::FortyLines).unwrap(), [record]);
     }
@@ -375,13 +459,11 @@ mod tests {
     #[rstest::rstest]
     #[case("id TEXT PRIMARY KEY, mode TEXT")]
     #[case(
-        "id TEXT, mode TEXT, player TEXT, start_level INTEGER, level INTEGER,
+        "id TEXT, mode TEXT, player TEXT, level INTEGER,
          lines INTEGER, score INTEGER, elapsed_ms INTEGER, completed_at INTEGER, outcome TEXT"
     )]
-    fn incompatible_record_tables_are_rejected_before_play(
-        #[case] columns: &str,
-        #[values(0, 1)] version: u32,
-    ) {
+    fn incompatible_record_tables_are_rejected_before_play(#[case] columns: &str) {
+        let version = 3;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("records.db");
         let db = Connection::open(&path).unwrap();

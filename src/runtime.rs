@@ -15,7 +15,7 @@ use miette::{IntoDiagnostic, WrapErr};
 
 use crate::app::{App, Screen};
 use crate::cli::{Command, Options};
-use crate::config::{Config, Paths};
+use crate::config::database_path;
 use crate::storage::Store;
 use crate::ui;
 
@@ -28,9 +28,14 @@ pub fn run() -> miette::Result<()> {
             "practice has no ranked records; choose 40l or blitz"
         ));
     }
-    let required_config = options.config.is_some();
-    let paths = Paths::resolve(options.config, options.db)?;
-    let mut config = Config::load(&paths.config, required_config)?;
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Err(miette::miette!(
+            "interactive terminal required; use --help for command-line options"
+        ));
+    }
+    let path = database_path(options.db)?;
+    let store = Store::open(&path)?;
+    let mut config = store.load_config()?;
     if let Some(Command::Play(play)) = &options.command {
         config.mode = play.mode;
         if let Some(name) = &play.name {
@@ -38,12 +43,6 @@ pub fn run() -> miette::Result<()> {
         }
     }
     let mut app = App::try_from(config)?;
-    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
-        return Err(miette::miette!(
-            "interactive terminal required; use --help for command-line options"
-        ));
-    }
-    let store = Store::open(&paths.db)?;
     match options.command {
         Some(Command::Play(_)) => app.start(),
         Some(Command::Records(records)) => app.open_records(records.mode.unwrap_or_default()),
@@ -129,6 +128,7 @@ mod tests {
 
     use super::*;
     use crate::app::SaveState;
+    use crate::config::Config;
     use crate::game::Mode;
 
     #[rstest::rstest]
@@ -218,8 +218,7 @@ mod tests {
         app.process_storage(&store);
         assert!(matches!(app.save, SaveState::Failed(_)));
         assert_eq!(app.record.as_ref(), Some(&record));
-        db.execute_batch(include_str!("../migrations/001_records.sql"))
-            .unwrap();
+        db.execute_batch(include_str!("schema.sql")).unwrap();
         app.key(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE))
             .unwrap();
         app.process_storage(&store);

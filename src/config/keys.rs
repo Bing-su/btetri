@@ -3,13 +3,10 @@ use std::fmt;
 use std::str::FromStr;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, ModifierKeyCode};
-use serde::{Deserialize, Deserializer};
 
-use super::deserialize_from_str;
 use crate::game::Action;
 
-#[derive(Clone, Debug, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Keys {
     pub left: Vec<KeyBinding>,
     pub right: Vec<KeyBinding>,
@@ -47,6 +44,54 @@ impl Default for Keys {
 }
 
 impl Keys {
+    pub fn entries(&self) -> Vec<(&'static str, String)> {
+        [
+            ("keys.left", &self.left),
+            ("keys.right", &self.right),
+            ("keys.clockwise", &self.clockwise),
+            ("keys.counter_clockwise", &self.counter_clockwise),
+            ("keys.rotate_180", &self.rotate_180),
+            ("keys.hard_drop", &self.hard_drop),
+            ("keys.soft_drop", &self.soft_drop),
+            ("keys.hold", &self.hold),
+            ("keys.pause", &self.pause),
+            ("keys.help", &self.help),
+        ]
+        .into_iter()
+        .map(|(name, keys)| {
+            (
+                name,
+                keys.iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            )
+        })
+        .collect()
+    }
+
+    pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
+        let keys = value
+            .split(',')
+            .map(|key| key.trim().parse())
+            .collect::<Result<Vec<_>, _>>()?;
+        let target = match name {
+            "keys.left" => &mut self.left,
+            "keys.right" => &mut self.right,
+            "keys.clockwise" => &mut self.clockwise,
+            "keys.counter_clockwise" => &mut self.counter_clockwise,
+            "keys.rotate_180" => &mut self.rotate_180,
+            "keys.hard_drop" => &mut self.hard_drop,
+            "keys.soft_drop" => &mut self.soft_drop,
+            "keys.hold" => &mut self.hold,
+            "keys.pause" => &mut self.pause,
+            "keys.help" => &mut self.help,
+            _ => return Err(format!("unknown key setting {name}")),
+        };
+        *target = keys;
+        Ok(())
+    }
+
     fn actions(&self) -> [(Action, &[KeyBinding]); 8] {
         [
             (Action::Left, &self.left),
@@ -111,18 +156,13 @@ impl Keys {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct KeyBinding(KeyCode);
 
-impl<'de> Deserialize<'de> for KeyBinding {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        deserialize_from_str(deserializer)
-    }
-}
-
 impl FromStr for KeyBinding {
     type Err = String;
 
     fn from_str(key: &str) -> Result<Self, Self::Err> {
         let code = match key.to_ascii_lowercase().as_str() {
             "space" => Some(KeyCode::Char(' ')),
+            "comma" => Some(KeyCode::Char(',')),
             "enter" => Some(KeyCode::Enter),
             "esc" => Some(KeyCode::Esc),
             "left" => Some(KeyCode::Left),
@@ -148,10 +188,50 @@ impl fmt::Display for KeyBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             KeyCode::Char(' ') => f.write_str("SPACE"),
-            KeyCode::Char(c) => write!(f, "{}", c.to_uppercase()),
+            KeyCode::Char(',') => f.write_str("COMMA"),
+            KeyCode::Char(c) => write!(f, "{}", c.to_ascii_uppercase()),
             KeyCode::Modifier(ModifierKeyCode::LeftShift) => f.write_str("SHIFT"),
             KeyCode::Modifier(ModifierKeyCode::LeftControl) => f.write_str("CTRL"),
             code => f.write_str(&format!("{code:?}").to_uppercase()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_controls_and_modifier_aliases_keep_working() {
+        let keys = Keys::default();
+        keys.validate().unwrap();
+        for (code, action) in [
+            (KeyCode::Left, Action::Left),
+            (KeyCode::Right, Action::Right),
+            (KeyCode::Up, Action::Clockwise),
+            (KeyCode::Char('X'), Action::Clockwise),
+            (KeyCode::Char('z'), Action::CounterClockwise),
+            (KeyCode::Char('a'), Action::Rotate180),
+            (KeyCode::Char(' '), Action::HardDrop),
+            (KeyCode::Down, Action::SoftDrop),
+            (KeyCode::Char('c'), Action::Hold),
+            (KeyCode::Modifier(ModifierKeyCode::RightShift), Action::Hold),
+            (
+                KeyCode::Modifier(ModifierKeyCode::RightControl),
+                Action::CounterClockwise,
+            ),
+        ] {
+            assert_eq!(
+                keys.action(KeyEvent::new(code, KeyModifiers::CONTROL)),
+                Some(action)
+            );
+            assert_eq!(keys.action(KeyEvent::new(code, KeyModifiers::ALT)), None);
+        }
+        for name in [
+            "SPACE", "COMMA", "ß", "김", "CTRL", "SHIFT", "ESC", "?", "ENTER", "LEFT",
+        ] {
+            let key: KeyBinding = name.parse().unwrap();
+            assert_eq!(key.to_string().parse::<KeyBinding>().unwrap(), key);
         }
     }
 }

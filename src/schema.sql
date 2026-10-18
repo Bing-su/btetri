@@ -2,7 +2,6 @@ CREATE TABLE IF NOT EXISTS game_records (
     id TEXT PRIMARY KEY NOT NULL,
     mode TEXT NOT NULL,
     player TEXT NOT NULL,
-    start_level INTEGER NOT NULL,
     level INTEGER NOT NULL,
     lines INTEGER NOT NULL,
     score INTEGER NOT NULL,
@@ -11,3 +10,7 @@ CREATE TABLE IF NOT EXISTS game_records (
     outcome TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS game_records_mode ON game_records (mode);
+CREATE TABLE IF NOT EXISTS app_settings (
+    name TEXT PRIMARY KEY NOT NULL,
+    value TEXT NOT NULL
+);

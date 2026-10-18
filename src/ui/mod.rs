@@ -1,5 +1,6 @@
 mod gameplay;
 mod records;
+mod settings;
 
 use std::time::Duration;
 
@@ -37,6 +38,7 @@ pub fn draw(frame: &mut Frame<'_>, app: &App) {
             gameplay::draw(frame, shell, app)
         }
         Screen::Records => records::draw(frame, shell, app),
+        Screen::Settings => settings::draw(frame, shell, app),
     }
     if matches!(app.screen, Screen::Help(_)) {
         help(frame, shell, app);
@@ -177,9 +179,14 @@ fn menu(frame: &mut Frame<'_>, area: Rect, app: &App) {
             frame.set_cursor_position((value_area.right().saturating_sub(1), y));
         }
     }
-    for (index, item) in [MenuItem::Start, MenuItem::Records, MenuItem::Quit]
-        .into_iter()
-        .enumerate()
+    for (index, item) in [
+        MenuItem::Start,
+        MenuItem::Records,
+        MenuItem::Settings,
+        MenuItem::Quit,
+    ]
+    .into_iter()
+    .enumerate()
     {
         frame.render_widget(
             Paragraph::new(focused(item.label(), app.menu_selection == item, app)),
@@ -401,6 +408,7 @@ mod tests {
     #[case(MenuItem::Mode, "MODE")]
     #[case(MenuItem::Start, "START GAME")]
     #[case(MenuItem::Records, "RECORDS")]
+    #[case(MenuItem::Settings, "SETTINGS")]
     #[case(MenuItem::Quit, "QUIT")]
     fn menu_highlights_the_selected_item(#[case] item: MenuItem, #[case] label: &str) {
         let mut app = App::try_from(Config::default()).unwrap();

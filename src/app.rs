@@ -1,6 +1,9 @@
+mod settings;
+
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+pub use settings::Settings;
 
 use crate::config::{Config, Keys, validate_player};
 use crate::game::{Action, Game, Mode, Status};
@@ -14,6 +17,7 @@ pub enum Screen {
     Paused,
     GameOver,
     Records,
+    Settings,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,6 +32,7 @@ pub enum MenuItem {
     Mode,
     Start,
     Records,
+    Settings,
     Quit,
 }
 
@@ -38,6 +43,7 @@ impl MenuItem {
             Self::Mode => "MODE",
             Self::Start => "START GAME",
             Self::Records => "RECORDS",
+            Self::Settings => "SETTINGS",
             Self::Quit => "QUIT",
         }
     }
@@ -47,7 +53,8 @@ impl MenuItem {
             Self::Player => Self::Mode,
             Self::Mode => Self::Start,
             Self::Start => Self::Records,
-            Self::Records => Self::Quit,
+            Self::Records => Self::Settings,
+            Self::Settings => Self::Quit,
             Self::Quit => Self::Player,
         }
     }
@@ -58,7 +65,8 @@ impl MenuItem {
             Self::Mode => Self::Player,
             Self::Start => Self::Mode,
             Self::Records => Self::Start,
-            Self::Quit => Self::Records,
+            Self::Settings => Self::Records,
+            Self::Quit => Self::Settings,
         }
     }
 }
@@ -100,6 +108,8 @@ impl RecordsState {
 
 pub struct App {
     pub(crate) config: Config,
+    pub(crate) settings: Option<Settings>,
+    pub(crate) config_save: SaveState,
     pub(crate) screen: Screen,
     pub(crate) menu_selection: MenuItem,
     pub(crate) dialog_selection: usize,
@@ -127,6 +137,8 @@ impl TryFrom<Config> for App {
             .map_err(|error| miette::miette!("{error}"))?;
         Ok(Self {
             config,
+            settings: None,
+            config_save: SaveState::None,
             screen: Screen::Menu,
             menu_selection: MenuItem::Start,
             dialog_selection: 0,
@@ -180,6 +192,33 @@ impl App {
     }
 
     pub fn process_storage(&mut self, store: &Store) {
+        if matches!(self.config_save, SaveState::Pending) {
+            self.notice = None;
+            self.config_save = store
+                .save_config(&self.config)
+                .map_err(|error| format!("{error:#}"))
+                .into();
+            if let SaveState::Failed(error) = &self.config_save {
+                self.notice = Some(format!("Settings not saved: {error}. R retries."));
+            }
+        }
+        if let Some(settings) = &mut self.settings
+            && matches!(settings.save, SaveState::Pending)
+        {
+            match store.save_config(&settings.config) {
+                Ok(()) => {
+                    self.config = settings.config.clone();
+                    self.config_save = SaveState::Saved;
+                    self.settings = None;
+                    self.screen = Screen::Menu;
+                    self.notice = Some("Settings saved".into());
+                }
+                Err(error) => {
+                    settings.save =
+                        SaveState::Failed(format!("Save failed: {error:#}. Select SAVE to retry."));
+                }
+            }
+        }
         if matches!(self.save, SaveState::Pending)
             && let Some(record) = &self.record
         {
@@ -211,9 +250,25 @@ impl App {
     ) -> miette::Result<()> {
         // Preserve a result created just before a terminal failure, e.g. by the final hard drop.
         self.process_storage(store);
+        let mut failures = Vec::new();
+        if let SaveState::Failed(error) = &self.config_save {
+            failures.push(format!("Unsaved settings: {error}"));
+        }
+        if let Some(settings) = &self.settings
+            && let SaveState::Failed(error) = &settings.save
+        {
+            // Preserve an explicitly saved draft on disconnect, e.g. after SQLite rejected the write.
+            failures.push(format!(
+                "Unsaved settings: {error}\nUnsaved draft: {:?}",
+                settings.config
+            ));
+        }
         if let SaveState::Failed(error) = &self.save {
             // Keep both failures so a disconnected terminal cannot hide the unsaved score.
-            let unsaved = format!("{error}\nUnsaved result: {:?}", self.record);
+            failures.push(format!("{error}\nUnsaved result: {:?}", self.record));
+        }
+        if !failures.is_empty() {
+            let unsaved = failures.join("\n");
             return match result {
                 Ok(()) => Err(miette::miette!("{unsaved}")),
                 Err(error) => Err(error.wrap_err(unsaved)),
@@ -294,6 +349,15 @@ impl App {
             Screen::Paused => self.pause_key(key),
             Screen::GameOver => self.result_key(key),
             Screen::Records => self.records_key(key),
+            Screen::Settings => {
+                if let Some(settings) = &mut self.settings
+                    && settings.key(key)
+                {
+                    self.settings = None;
+                    self.screen = Screen::Menu;
+                    self.notice = None;
+                }
+            }
         }
         Ok(())
     }
@@ -304,6 +368,10 @@ impl App {
             return;
         }
         match key.code {
+            KeyCode::Char('r') if matches!(self.config_save, SaveState::Failed(_)) => {
+                self.config_save = SaveState::Pending;
+                self.notice = None;
+            }
             KeyCode::Up => self.menu_selection = self.menu_selection.previous(),
             KeyCode::Down | KeyCode::Tab => self.menu_selection = self.menu_selection.next(),
             KeyCode::Left => self.change_setting(-1),
@@ -314,6 +382,11 @@ impl App {
                 MenuItem::Mode => self.change_setting(1),
                 MenuItem::Start => self.start(),
                 MenuItem::Records => self.open_records(self.config.mode),
+                MenuItem::Settings => {
+                    self.settings = Some(Settings::new(self.config.clone()));
+                    self.screen = Screen::Settings;
+                    self.notice = None;
+                }
                 MenuItem::Quit => self.quit = true,
             },
             _ => {}
@@ -335,6 +408,7 @@ impl App {
                 return;
             }
             self.config.player = draft.trim().to_owned();
+            self.config_save = SaveState::Pending;
             self.name_draft = None;
             self.notice = None;
             self.menu_selection = MenuItem::Mode;
@@ -361,6 +435,7 @@ impl App {
     fn change_setting(&mut self, delta: i32) {
         if self.menu_selection == MenuItem::Mode {
             self.config.mode = self.config.mode.cycle(delta);
+            self.config_save = SaveState::Pending;
         }
     }
 
@@ -499,6 +574,115 @@ impl App {
 mod tests {
     use super::*;
 
+    #[rstest::rstest]
+    fn failed_settings_draft_is_reported_after_terminal_failure(
+        #[values(false, true)] already_processed: bool,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.db");
+        let store = Store::open(&path).unwrap();
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.menu_selection = MenuItem::Settings;
+        app.key(key(KeyCode::Enter)).unwrap();
+        app.settings.as_mut().unwrap().config.player = "DRAFT".into();
+        app.key(key(KeyCode::F(2))).unwrap();
+        let db = rusqlite::Connection::open(path).unwrap();
+        db.execute("DROP TABLE app_settings", []).unwrap();
+        if already_processed {
+            app.process_storage(&store);
+        }
+        let error = app
+            .finish_session(&store, Err(miette::miette!("terminal failed")))
+            .unwrap_err();
+        let message = format!("{error:#}");
+        for expected in ["Unsaved settings", "DRAFT", "terminal failed"] {
+            assert!(message.contains(expected), "{message}");
+        }
+        assert_eq!(app.config.player, "PLAYER");
+    }
+
+    #[test]
+    fn menu_choices_persist_and_shutdown_reports_both_failed_saves() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.db");
+        let store = Store::open(&path).unwrap();
+        let mut app = App::try_from(store.load_config().unwrap()).unwrap();
+        app.menu_selection = MenuItem::Player;
+        for code in [
+            KeyCode::Enter,
+            KeyCode::Delete,
+            KeyCode::Char('김'),
+            KeyCode::Enter,
+            KeyCode::Right,
+        ] {
+            app.key(key(code)).unwrap();
+        }
+        app.process_storage(&store);
+        assert_eq!(store.load_config().unwrap(), app.config);
+        assert_eq!(app.config.player, "김");
+        assert_eq!(app.config.mode, Mode::Blitz);
+        app.start();
+        app.advance(Duration::from_secs(120)).unwrap();
+        app.config_save = SaveState::Pending;
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch("DROP TABLE app_settings; DROP TABLE game_records;")
+            .unwrap();
+        let error = app
+            .finish_session(&store, Err(miette::miette!("terminal failed")))
+            .unwrap_err();
+        let message = format!("{error:#}");
+        for expected in ["Unsaved settings", "Unsaved result", "terminal failed"] {
+            assert!(message.contains(expected), "{message}");
+        }
+    }
+
+    #[test]
+    fn settings_save_cancel_and_failure_keep_the_correct_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.db");
+        let store = Store::open(&path).unwrap();
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.menu_selection = MenuItem::Settings;
+        app.key(key(KeyCode::Enter)).unwrap();
+        let draft = app.settings.as_mut().unwrap();
+        draft.config.ghost_enabled = false;
+        draft.config.keys.left = draft.config.keys.right.clone();
+        app.key(key(KeyCode::F(2))).unwrap();
+        assert!(app.settings.as_ref().unwrap().error.is_some());
+        assert!(!matches!(
+            app.settings.as_ref().unwrap().save,
+            SaveState::Pending
+        ));
+        app.key(key(KeyCode::Esc)).unwrap();
+        assert_eq!(app.config, Config::default());
+        app.key(key(KeyCode::Enter)).unwrap();
+        app.settings.as_mut().unwrap().config.ghost_enabled = false;
+        app.key(key(KeyCode::F(2))).unwrap();
+        app.process_storage(&store);
+        assert_eq!(app.screen, Screen::Menu);
+        assert!(!app.config.ghost_enabled);
+        assert_eq!(store.load_config().unwrap(), app.config);
+        app.key(key(KeyCode::Enter)).unwrap();
+        app.settings.as_mut().unwrap().config.next_queue_length = 2;
+        let db = rusqlite::Connection::open(path).unwrap();
+        db.execute("ALTER TABLE app_settings RENAME TO unavailable", [])
+            .unwrap();
+        app.key(key(KeyCode::F(2))).unwrap();
+        app.process_storage(&store);
+        assert_eq!(app.screen, Screen::Settings);
+        assert_eq!(app.config.next_queue_length, 6);
+        assert_eq!(app.settings.as_ref().unwrap().config.next_queue_length, 2);
+        assert!(matches!(
+            app.settings.as_ref().unwrap().save,
+            SaveState::Failed(_)
+        ));
+        db.execute("ALTER TABLE unavailable RENAME TO app_settings", [])
+            .unwrap();
+        app.key(key(KeyCode::F(2))).unwrap();
+        app.process_storage(&store);
+        assert_eq!(store.load_config().unwrap().next_queue_length, 2);
+    }
+
     #[test]
     fn practice_continues_without_save_and_records_skip_practice() {
         let mut app = App::try_from(Config {
@@ -546,7 +730,8 @@ mod tests {
 
     #[test]
     fn held_soft_drop_stops_only_after_all_bindings_release() {
-        let config = Config::parse("[keys]\nsoft_drop = ['down', 's']", "test").unwrap();
+        let mut config = Config::default();
+        config.set("keys.soft_drop", "down, s").unwrap();
         let mut app = App::try_from(config).unwrap();
         app.keyboard_releases = true;
         app.start();
@@ -675,6 +860,7 @@ mod tests {
         let mut app = App::try_from(Config::default()).unwrap();
         for expected in [
             MenuItem::Records,
+            MenuItem::Settings,
             MenuItem::Quit,
             MenuItem::Player,
             MenuItem::Mode,
@@ -719,6 +905,7 @@ mod tests {
         assert_eq!(app.record_mode, Mode::FortyLines);
         assert!(matches!(app.records, RecordsState::Requested));
         app.key(key(KeyCode::Esc)).unwrap();
+        app.key(key(KeyCode::Down)).unwrap();
         app.key(key(KeyCode::Down)).unwrap();
         app.key(key(KeyCode::Enter)).unwrap();
         assert!(app.quit);
