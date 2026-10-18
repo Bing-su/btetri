@@ -249,8 +249,9 @@ mod tests {
             ("mode", "practice"),
             ("ghost_enabled", "false"),
             ("next_queue_length", "3"),
-            ("keys.left", "j, ß, COMMA"),
+            ("keys.left", "j, ß, COMMA, F2, DELETE"),
             ("theme.i", "red"),
+            ("theme.o", "reset"),
             ("theme.background", "42"),
         ] {
             config.set(name, value).unwrap();
@@ -284,30 +285,30 @@ mod tests {
         Record::from_game(&Game::new(Mode::Practice, 42), "Alice").unwrap_err();
     }
 
-    #[test]
-    fn retired_formats_are_replaced_once_and_new_data_survives_reopen() {
-        for version in 0..=2 {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("old.db");
-            let db = Connection::open(&path).unwrap();
-            db.execute_batch("CREATE TABLE game_records (id TEXT); INSERT INTO game_records VALUES ('old'); CREATE TABLE app_settings (name TEXT, value TEXT); INSERT INTO app_settings VALUES ('player', 'OLD');").unwrap();
-            db.pragma_update(None, "user_version", version).unwrap();
-            drop(db);
-            let store = Store::open(&path).unwrap();
-            assert!(store.records(Mode::FortyLines).unwrap().is_empty());
-            assert_eq!(store.load_config().unwrap(), Config::default());
-            let record = Record::from_game(&Game::new(Mode::Blitz, 42), "NEW").unwrap();
-            store.save(&record).unwrap();
-            let config = Config {
-                player: "NEW".into(),
-                ..Config::default()
-            };
-            store.save_config(&config).unwrap();
-            drop(store);
-            let store = Store::open(&path).unwrap();
-            assert_eq!(store.records(Mode::Blitz).unwrap(), [record]);
-            assert_eq!(store.load_config().unwrap(), config);
-        }
+    #[rstest::rstest]
+    fn retired_formats_are_replaced_once_and_new_data_survives_reopen(
+        #[values(0, 1, 2)] version: u32,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("CREATE TABLE game_records (id TEXT); INSERT INTO game_records VALUES ('old'); CREATE TABLE app_settings (name TEXT, value TEXT); INSERT INTO app_settings VALUES ('player', 'OLD');").unwrap();
+        db.pragma_update(None, "user_version", version).unwrap();
+        drop(db);
+        let store = Store::open(&path).unwrap();
+        assert!(store.records(Mode::FortyLines).unwrap().is_empty());
+        assert_eq!(store.load_config().unwrap(), Config::default());
+        let record = Record::from_game(&Game::new(Mode::Blitz, 42), "NEW").unwrap();
+        store.save(&record).unwrap();
+        let config = Config {
+            player: "NEW".into(),
+            ..Config::default()
+        };
+        store.save_config(&config).unwrap();
+        drop(store);
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.records(Mode::Blitz).unwrap(), [record]);
+        assert_eq!(store.load_config().unwrap(), config);
     }
 
     #[test]

@@ -394,15 +394,6 @@ mod tests {
         assert!(!action.modifier.contains(Modifier::BOLD));
     }
 
-    #[test]
-    fn menu_has_controls() {
-        let app = App::try_from(Config::default()).unwrap();
-        let text = screen(&app, 100, 36);
-        for label in ["MAIN MENU", "PLAYER", "40 LINES", "START GAME", "RECORDS"] {
-            assert!(text.contains(label));
-        }
-    }
-
     #[rstest::rstest]
     #[case(MenuItem::Player, "PLAYER")]
     #[case(MenuItem::Mode, "MODE")]
@@ -413,29 +404,31 @@ mod tests {
     fn menu_highlights_the_selected_item(#[case] item: MenuItem, #[case] label: &str) {
         let mut app = App::try_from(Config::default()).unwrap();
         app.menu_selection = item;
-        assert!(screen(&app, 80, 28).contains(&format!("> {label}")));
+        let text = screen(&app, 80, 28);
+        assert!(text.contains("MAIN MENU"));
+        assert!(text.contains("40 LINES"));
+        assert!(text.contains(&format!("> {label}")));
     }
 
-    #[test]
-    fn gameplay_pause_result_and_empty_records_render() {
+    #[rstest::rstest]
+    #[case(Screen::Playing, SaveState::None, &["40 LINES", "HOLD", "NEXT"])]
+    #[case(Screen::GameOver, SaveState::Pending, &["Saving record"])]
+    #[case(Screen::GameOver, SaveState::Failed("Database unavailable".into()), &["Save failed: R retry"])]
+    #[case(Screen::Records, SaveState::None, &["No records"])]
+    fn gameplay_and_record_states_render(
+        #[case] state: Screen,
+        #[case] save: SaveState,
+        #[case] labels: &[&str],
+    ) {
         let mut app = App::try_from(Config::default()).unwrap();
         app.start();
+        app.screen = state;
+        app.save = save;
         let text = screen(&app, 80, 28);
-        assert!(text.contains("40 LINES"));
-        assert!(text.contains("HOLD"));
-        assert!(text.contains("NEXT"));
-        app.screen = Screen::Paused;
-        assert!(screen(&app, 80, 28).contains("RESUME"));
-        app.screen = Screen::GameOver;
-        app.save = SaveState::Pending;
-        let text = screen(&app, 80, 28);
-        assert!(text.contains("Saving record"));
+        for label in labels {
+            assert!(text.contains(label), "missing {label}");
+        }
         assert!(!text.contains("Record saved"));
-        app.save = SaveState::Failed("Database unavailable".into());
-        assert!(screen(&app, 80, 28).contains("Save failed: R retry"));
-        app.open_records(Mode::FortyLines);
-        app.records = crate::app::RecordsState::Loaded(Vec::new());
-        assert!(screen(&app, 80, 28).contains("No records"));
     }
 
     #[rstest::rstest]

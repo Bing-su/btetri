@@ -57,6 +57,26 @@ impl Default for Theme {
 }
 
 impl Theme {
+    pub fn color_mut(&mut self, name: &str) -> Option<&mut Color> {
+        match name {
+            "theme.background" => Some(&mut self.background),
+            "theme.foreground" => Some(&mut self.foreground),
+            "theme.muted" => Some(&mut self.muted),
+            "theme.border" => Some(&mut self.border),
+            "theme.accent" => Some(&mut self.accent),
+            "theme.grid" => Some(&mut self.grid),
+            "theme.ghost" => Some(&mut self.ghost),
+            "theme.i" => Some(&mut self.i),
+            "theme.o" => Some(&mut self.o),
+            "theme.t" => Some(&mut self.t),
+            "theme.s" => Some(&mut self.s),
+            "theme.z" => Some(&mut self.z),
+            "theme.j" => Some(&mut self.j),
+            "theme.l" => Some(&mut self.l),
+            _ => None,
+        }
+    }
+
     pub fn entries(&self) -> Vec<(&'static str, String)> {
         [
             ("theme.background", self.background.to_string()),
@@ -81,23 +101,9 @@ impl Theme {
         let color = value
             .parse::<Color>()
             .map_err(|error| format!("{error}; use a color name, #RRGGBB, or 0–255"))?;
-        let target = match name {
-            "theme.background" => &mut self.background,
-            "theme.foreground" => &mut self.foreground,
-            "theme.muted" => &mut self.muted,
-            "theme.border" => &mut self.border,
-            "theme.accent" => &mut self.accent,
-            "theme.grid" => &mut self.grid,
-            "theme.ghost" => &mut self.ghost,
-            "theme.i" => &mut self.i,
-            "theme.o" => &mut self.o,
-            "theme.t" => &mut self.t,
-            "theme.s" => &mut self.s,
-            "theme.z" => &mut self.z,
-            "theme.j" => &mut self.j,
-            "theme.l" => &mut self.l,
-            _ => return Err(format!("unknown theme setting {name}")),
-        };
+        let target = self
+            .color_mut(name)
+            .ok_or_else(|| format!("unknown theme setting {name}"))?;
         *target = color;
         Ok(())
     }

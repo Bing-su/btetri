@@ -1,11 +1,11 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Wrap};
 
 use super::{footer, header, key_hints};
-use crate::app::{App, SaveState};
+use crate::app::{App, Edit, SaveState, Settings, rgb};
 
 pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let Some(settings) = &app.settings else {
@@ -18,16 +18,13 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ("RESET DEFAULTS", String::new()),
         ("CANCEL", String::new()),
     ]);
-    let selected = settings.selected;
-    let field = entries.get(selected).map_or("", |(name, _)| *name);
+    let field = entries.get(settings.selected).map_or("", |(name, _)| *name);
     let hint = if field.starts_with("keys.") {
-        "Keys: comma-separated names, e.g. UP, X or C, SHIFT"
+        "Enter opens key bindings; press a key to assign it"
     } else if field.starts_with("theme.") {
-        "Colors: name, #RRGGBB, or palette index 0–255"
-    } else if field == "mode" {
-        "Modes: 40l, blitz, practice"
+        "Enter opens palette / RGB color picker"
     } else {
-        "Changes apply only after SAVE. Reset also needs SAVE."
+        "Left/Right changes choices. Changes apply only after SAVE."
     };
     frame.render_widget(
         Paragraph::new(hint)
@@ -35,46 +32,10 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .style(Style::default().fg(app.config.theme.muted)),
         Rect::new(area.x, area.y + 3, area.width, 2),
     );
-    let rows = usize::from(area.height.saturating_sub(13)).max(1);
-    let start = selected.saturating_sub(rows - 1);
-    for (index, (name, value)) in entries.iter().enumerate().skip(start).take(rows) {
-        let y = area.y + 6 + u16::try_from(index - start).unwrap_or_default();
-        let style = Style::default().fg(if index == selected {
-            app.config.theme.accent
-        } else {
-            app.config.theme.foreground
-        });
-        let label = name
-            .replace("keys.", "KEY ")
-            .replace("theme.", "COLOR ")
-            .replace('_', " ")
-            .to_uppercase();
-        frame.render_widget(
-            Paragraph::new(format!(
-                "{} {label}",
-                if index == selected { ">" } else { " " }
-            ))
-            .style(style),
-            Rect::new(area.x + 2, y, 30, 1),
-        );
-        let editing = index == selected && settings.edit.is_some();
-        let value = if editing {
-            format!("{} ", settings.edit.as_deref().unwrap_or_default())
-        } else {
-            value.clone()
-        };
-        let value_area = Rect::new(area.x + 33, y, area.width.saturating_sub(35), 1);
-        frame.render_widget(Line::from(value).right_aligned().style(style), value_area);
-        if editing {
-            frame.set_cursor_position((value_area.right().saturating_sub(1), y));
-        }
+    setting_rows(frame, area, settings, &entries, app);
+    if let Some(edit) = &settings.edit {
+        editor(frame, area, edit, app);
     }
-    frame.render_widget(
-        Paragraph::new(format!("{}/{}", selected + 1, entries.len()))
-            .centered()
-            .style(Style::default().fg(app.config.theme.muted)),
-        Rect::new(area.x, area.bottom() - 7, area.width, 1),
-    );
     let error = settings.error.as_ref().or(match &settings.save {
         SaveState::Failed(error) => Some(error),
         _ => None,
@@ -87,21 +48,236 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
             Rect::new(area.x + 2, area.bottom() - 6, area.width - 4, 3),
         );
     }
-    let hints = if settings.edit.is_some() {
-        vec![
+    let hints = match &settings.edit {
+        Some(Edit::Name(_)) => vec![
             key_hints(&[("Enter", "accept"), ("Esc", "cancel edit")], app),
             key_hints(&[("Backspace", "delete"), ("Delete", "clear")], app),
-        ]
-    } else {
-        vec![
+        ],
+        Some(Edit::Keys {
+            capturing: true, ..
+        }) => vec![Line::from("Press the key to assign (including Esc / F2)").centered()],
+        Some(Edit::Keys { .. }) => vec![
+            key_hints(
+                &[("↑ ↓", "select"), ("Enter", "assign"), ("Delete", "remove")],
+                app,
+            ),
+            key_hints(&[("F2", "accept"), ("Esc", "cancel edit")], app),
+        ],
+        Some(Edit::Color(_)) => vec![
+            key_hints(
+                &[
+                    ("↑ ↓ ← →", "adjust"),
+                    ("Tab", "palette/RGB"),
+                    ("Delete", "terminal default"),
+                ],
+                app,
+            ),
+            key_hints(&[("Enter", "accept"), ("Esc", "cancel edit")], app),
+        ],
+        None => vec![
             key_hints(
                 &[("↑ ↓", "navigate"), ("← →", "change"), ("Enter", "edit")],
                 app,
             ),
             key_hints(&[("F2", "save"), ("Esc", "cancel")], app),
-        ]
+        ],
     };
     footer(frame, area, hints, app);
+}
+
+fn setting_rows(
+    frame: &mut Frame<'_>,
+    area: Rect,
+    settings: &Settings,
+    entries: &[(&str, String)],
+    app: &App,
+) {
+    let rows = usize::from(area.height.saturating_sub(13)).max(1);
+    let start = settings.selected.saturating_sub(rows - 1);
+    for (index, (name, value)) in entries.iter().enumerate().skip(start).take(rows) {
+        let y = area.y + 6 + u16::try_from(index - start).unwrap_or_default();
+        let selected = index == settings.selected;
+        let style = Style::default().fg(if selected {
+            app.config.theme.accent
+        } else {
+            app.config.theme.foreground
+        });
+        let label = name
+            .replace("keys.", "KEY ")
+            .replace("theme.", "COLOR ")
+            .replace('_', " ")
+            .to_uppercase();
+        frame.render_widget(
+            Paragraph::new(format!("{} {label}", if selected { ">" } else { " " })).style(style),
+            Rect::new(area.x + 2, y, 30, 1),
+        );
+        let editing = selected && matches!(settings.edit, Some(Edit::Name(_)));
+        let value = if let Some(Edit::Name(text)) = settings.edit.as_ref().filter(|_| editing) {
+            format!("{text} ")
+        } else {
+            match *name {
+                "ghost_enabled" if settings.config.ghost_enabled => "< ON >".into(),
+                "ghost_enabled" => "< OFF >".into(),
+                "mode" => format!("< {} >", settings.config.mode.label()),
+                "next_queue_length" => format!("< {} >", settings.config.next_queue_length),
+                _ => value.clone(),
+            }
+        };
+        let value_area = Rect::new(area.x + 33, y, area.width - 35, 1);
+        frame.render_widget(Line::from(value).right_aligned().style(style), value_area);
+        if editing {
+            frame.set_cursor_position((value_area.right() - 1, y));
+        }
+    }
+    frame.render_widget(
+        Paragraph::new(format!("{}/{}", settings.selected + 1, entries.len()))
+            .centered()
+            .style(Style::default().fg(app.config.theme.muted)),
+        Rect::new(area.x, area.bottom() - 7, area.width, 1),
+    );
+}
+
+fn editor(frame: &mut Frame<'_>, area: Rect, edit: &Edit, app: &App) {
+    if matches!(edit, Edit::Name(_)) {
+        return;
+    }
+    let panel = Rect::new(area.x + 4, area.y + 5, area.width - 8, area.height - 8);
+    frame.render_widget(Clear, panel);
+    frame.render_widget(
+        Block::bordered()
+            .style(Style::default().bg(app.config.theme.background))
+            .title_top(match edit {
+                Edit::Keys { .. } => " KEY BINDINGS ",
+                _ => " COLOR PICKER ",
+            }),
+        panel,
+    );
+    match edit {
+        Edit::Keys {
+            bindings,
+            selected,
+            capturing,
+        } => {
+            let rows = usize::from(panel.height.saturating_sub(7));
+            let start = selected.saturating_sub(rows.saturating_sub(1));
+            for index in start..=bindings.len().min(start + rows.saturating_sub(1)) {
+                let label = bindings
+                    .get(index)
+                    .map_or_else(|| "+ ADD KEY".into(), ToString::to_string);
+                let label = if index == *selected && *capturing {
+                    "PRESS A KEY…".into()
+                } else {
+                    label
+                };
+                let style = Style::default().fg(if index == *selected {
+                    app.config.theme.accent
+                } else {
+                    app.config.theme.foreground
+                });
+                frame.render_widget(
+                    Paragraph::new(format!(
+                        "{} {label}",
+                        if index == *selected { ">" } else { " " }
+                    ))
+                    .style(style),
+                    Rect::new(
+                        panel.x + 3,
+                        panel.y + 2 + u16::try_from(index - start).unwrap_or_default(),
+                        panel.width - 6,
+                        1,
+                    ),
+                );
+            }
+        }
+        Edit::Color(picker) => {
+            frame.render_widget(
+                Paragraph::new(format!(
+                    "{}    {}",
+                    if picker.palette { "PALETTE" } else { "RGB" },
+                    picker.value
+                ))
+                .centered(),
+                Rect::new(panel.x + 1, panel.y + 1, panel.width - 2, 1),
+            );
+            let components = rgb(picker.value);
+            if picker.palette {
+                palette(frame, panel, picker.value, picker.index());
+            } else {
+                sliders(frame, panel, components, picker.channel);
+            }
+            frame.render_widget(
+                Paragraph::new("PREVIEW")
+                    .centered()
+                    .style(
+                        Style::default()
+                            .bg(picker.value)
+                            .fg(if picker.value == Color::Reset {
+                                Color::Reset
+                            } else {
+                                contrast(components)
+                            }),
+                    ),
+                Rect::new(panel.x + 5, panel.y + 12, panel.width - 10, 2),
+            );
+        }
+        Edit::Name(_) => {}
+    }
+}
+
+fn contrast([r, g, b]: [u8; 3]) -> Color {
+    if u32::from(r) + u32::from(g) + u32::from(b) > 380 {
+        Color::Black
+    } else {
+        Color::White
+    }
+}
+
+fn palette(frame: &mut Frame<'_>, panel: Rect, value: Color, selected_index: u8) {
+    for index in 0..=255_u8 {
+        let selected = value != Color::Reset && selected_index == index;
+        let color = Color::Indexed(index);
+        frame.render_widget(
+            Paragraph::new(if selected { "[]" } else { "  " })
+                .style(Style::default().bg(color).fg(contrast(rgb(color)))),
+            Rect::new(
+                panel.x + 3 + u16::from(index % 32) * 2,
+                panel.y + 3 + u16::from(index / 32),
+                2,
+                1,
+            ),
+        );
+    }
+}
+
+fn sliders(frame: &mut Frame<'_>, panel: Rect, [r, g, b]: [u8; 3], selected: usize) {
+    for (index, (name, value, color)) in [
+        ("RED", r, Color::Red),
+        ("GREEN", g, Color::Green),
+        ("BLUE", b, Color::Blue),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        frame.render_widget(
+            Gauge::default()
+                .gauge_style(Style::default().fg(color))
+                .ratio(f64::from(value) / 255.0)
+                .label(format!(
+                    "{} {name} {value:03}",
+                    if selected == index { ">" } else { " " }
+                )),
+            Rect::new(
+                panel.x + 5,
+                panel.y + 3 + u16::try_from(index).unwrap_or_default() * 3,
+                panel.width - 10,
+                1,
+            ),
+        );
+    }
+    frame.render_widget(
+        Paragraph::new("PgUp/PgDn: ±16    Home/End: 0/255").centered(),
+        Rect::new(panel.x + 1, panel.y + 10, panel.width - 2, 1),
+    );
 }
 
 #[cfg(test)]
@@ -112,6 +288,62 @@ mod tests {
     use super::*;
     use crate::app::{Screen, Settings};
     use crate::config::Config;
+
+    #[rstest::rstest]
+    #[case(80, 28)]
+    #[case(100, 40)]
+    fn typed_editors_show_controls_and_color_preview(
+        #[case] width: u16,
+        #[case] height: u16,
+        #[values(false, true)] palette_mode: bool,
+    ) {
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.screen = Screen::Settings;
+        app.settings = Some(Settings::new(app.config.clone()));
+        app.settings.as_mut().unwrap().selected = 14;
+        let key =
+            |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
+        app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
+        if palette_mode {
+            app.key(key(crossterm::event::KeyCode::Tab)).unwrap();
+        }
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        terminal
+            .draw(|frame| super::super::draw(frame, &app))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        for label in [
+            "COLOR PICKER",
+            "PREVIEW",
+            "cancel edit",
+            if palette_mode { "PALETTE" } else { "RED" },
+        ] {
+            assert!(text.contains(label), "missing {label}");
+        }
+        app.key(key(crossterm::event::KeyCode::Esc)).unwrap();
+        app.settings.as_mut().unwrap().selected = 4;
+        app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
+        app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
+        terminal
+            .draw(|frame| super::super::draw(frame, &app))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(text.contains("KEY BINDINGS"));
+        assert!(text.contains("PRESS A KEY"));
+        assert!(text.contains("including Esc / F2"));
+    }
 
     #[rstest::rstest]
     #[case(80, 28)]
@@ -136,7 +368,8 @@ mod tests {
             assert!(text.contains(label), "missing {label}");
         }
         app.settings.as_mut().unwrap().selected = 0;
-        app.settings.as_mut().unwrap().edit = Some("가나다라마바사아자차카타파하가끝".into());
+        app.settings.as_mut().unwrap().edit =
+            Some(Edit::Name("가나다라마바사아자차카타파하가끝".into()));
         terminal
             .draw(|frame| super::super::draw(frame, &app))
             .unwrap();

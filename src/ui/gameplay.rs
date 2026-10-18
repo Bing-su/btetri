@@ -28,8 +28,42 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     playfield(frame, board, game, app, dim);
     sidebars(frame, left, next, game, app, dim);
     match app.screen {
-        Screen::Paused => pause_dialog(frame, board, app),
-        Screen::GameOver => result_dialog(frame, board, game, app),
+        Screen::Paused => {
+            pause_dialog(frame, board, app);
+            footer(
+                frame,
+                area,
+                vec![key_hints(
+                    &[("↑ ↓", "navigate"), ("Enter", "select"), ("Esc", "resume")],
+                    app,
+                )],
+                app,
+            );
+        }
+        Screen::GameOver => {
+            result_dialog(frame, board, game, app);
+            footer(
+                frame,
+                area,
+                vec![key_hints(
+                    &[
+                        ("↑ ↓", "navigate"),
+                        ("Enter", "select"),
+                        ("Esc", "main menu"),
+                    ],
+                    app,
+                )],
+                app,
+            );
+            if let SaveState::Failed(error) = &app.save {
+                frame.render_widget(
+                    Paragraph::new(error.as_str())
+                        .centered()
+                        .wrap(Wrap { trim: true }),
+                    Rect::new(area.x, area.bottom().saturating_sub(3), area.width, 2),
+                );
+            }
+        }
         _ => {
             let keys = &app.config.keys;
             footer(
@@ -77,40 +111,6 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
                     ),
                 ],
                 app,
-            );
-        }
-    }
-    if app.screen == Screen::Paused {
-        footer(
-            frame,
-            area,
-            vec![key_hints(
-                &[("↑ ↓", "navigate"), ("Enter", "select"), ("Esc", "resume")],
-                app,
-            )],
-            app,
-        );
-    }
-    if app.screen == Screen::GameOver {
-        footer(
-            frame,
-            area,
-            vec![key_hints(
-                &[
-                    ("↑ ↓", "navigate"),
-                    ("Enter", "select"),
-                    ("Esc", "main menu"),
-                ],
-                app,
-            )],
-            app,
-        );
-        if let SaveState::Failed(error) = &app.save {
-            frame.render_widget(
-                Paragraph::new(error.as_str())
-                    .centered()
-                    .wrap(Wrap { trim: true }),
-                Rect::new(area.x, area.bottom().saturating_sub(3), area.width, 2),
             );
         }
     }

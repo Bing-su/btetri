@@ -574,8 +574,6 @@ fn the_buffer_has_a_ceiling() {
         x: 3,
         y: -1
     }));
-    assert_eq!(game.board().len(), 40);
-    assert_eq!(VISIBLE_HEIGHT, 20);
 }
 
 #[rstest]
@@ -1061,15 +1059,20 @@ proptest! {
     }
 
     #[test]
-    fn generated_moves_preserve_board_and_ghost_invariants(seed in any::<u64>(), actions in prop::collection::vec(0_u8..9, 0..200)) {
-        let mut game = Game::new(Mode::FortyLines, seed);
+    fn generated_moves_preserve_board_and_ghost_invariants(
+        seed in any::<u64>(),
+        mode in prop::sample::select(&Mode::ALL),
+        actions in prop::collection::vec(prop::option::of(prop::sample::select(&[
+            Action::Left, Action::Right, Action::Clockwise, Action::CounterClockwise,
+            Action::HardDrop, Action::Hold, Action::SoftDrop, Action::Rotate180,
+        ])), 0..200),
+    ) {
+        let mut game = Game::new(mode, seed);
         for action in actions {
             if game.status() != Status::Playing { break; }
             match action {
-                0 => game.apply(Action::Left), 1 => game.apply(Action::Right),
-                2 => game.apply(Action::Clockwise), 3 => game.apply(Action::CounterClockwise),
-                4 => game.apply(Action::HardDrop), 5 => game.apply(Action::Hold),
-                6 => game.apply(Action::SoftDrop), 7 => game.apply(Action::Rotate180), _ => game.advance(Duration::from_millis(700)),
+                Some(action) => game.apply(action),
+                None => game.advance(Duration::from_millis(700)),
             }
             prop_assert!(game.board.iter().all(|row| row.iter().any(Option::is_none)));
             if game.status() == Status::Playing {

@@ -3,11 +3,31 @@ mod settings;
 use std::time::Duration;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-pub use settings::Settings;
+pub use settings::{Edit, Settings, rgb};
 
 use crate::config::{Config, Keys, validate_player};
 use crate::game::{Action, Game, Mode, Status};
 use crate::storage::{Record, Store};
+
+// Keep both player editors consistent, e.g. Ctrl+C must never add a character to a name.
+fn edit_name_input(text: &mut String, key: KeyEvent) {
+    match key.code {
+        KeyCode::Backspace => {
+            text.pop();
+        }
+        KeyCode::Delete => text.clear(),
+        KeyCode::Char(c)
+            if !c.is_control()
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+                && text.chars().count() < 16 =>
+        {
+            text.push(c)
+        }
+        _ => {}
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Screen {
@@ -349,17 +369,50 @@ impl App {
             Screen::Paused => self.pause_key(key),
             Screen::GameOver => self.result_key(key),
             Screen::Records => self.records_key(key),
-            Screen::Settings => {
-                if let Some(settings) = &mut self.settings
-                    && settings.key(key)
-                {
-                    self.settings = None;
-                    self.screen = Screen::Menu;
-                    self.notice = None;
-                }
-            }
+            Screen::Settings => self.settings_key(key),
         }
         Ok(())
+    }
+
+    fn settings_key(&mut self, key: KeyEvent) {
+        let capturing = self.settings.as_ref().is_some_and(|settings| {
+            matches!(
+                settings.edit,
+                Some(Edit::Keys {
+                    capturing: true,
+                    ..
+                })
+            )
+        });
+        let once = capturing
+            || matches!(
+                key.code,
+                KeyCode::Enter | KeyCode::Esc | KeyCode::F(2) | KeyCode::Tab | KeyCode::Delete
+            );
+        if once && key.kind == KeyEventKind::Repeat {
+            return;
+        }
+        if self.keyboard_releases && key.kind == KeyEventKind::Press {
+            let code = match key.code {
+                KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
+                code => code,
+            };
+            let held = self.pressed_actions.contains(&code);
+            if !held {
+                self.pressed_actions.push(code);
+            }
+            // Some terminals repeat Press, e.g. holding F2 must not accept and then save a draft.
+            if once && held {
+                return;
+            }
+        }
+        if let Some(settings) = &mut self.settings
+            && settings.key(key)
+        {
+            self.settings = None;
+            self.screen = Screen::Menu;
+            self.notice = None;
+        }
     }
 
     fn menu_key(&mut self, key: KeyEvent) {
@@ -386,6 +439,10 @@ impl App {
                     self.settings = Some(Settings::new(self.config.clone()));
                     self.screen = Screen::Settings;
                     self.notice = None;
+                    self.pressed_actions.clear();
+                    if self.keyboard_releases {
+                        self.pressed_actions.push(KeyCode::Enter);
+                    }
                 }
                 MenuItem::Quit => self.quit = true,
             },
@@ -413,22 +470,7 @@ impl App {
             self.notice = None;
             self.menu_selection = MenuItem::Mode;
         } else if let Some(draft) = &mut self.name_draft {
-            match key.code {
-                KeyCode::Backspace => {
-                    draft.pop();
-                }
-                KeyCode::Delete => draft.clear(),
-                KeyCode::Char(c)
-                    if !c.is_control()
-                        && !key
-                            .modifiers
-                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                        && draft.chars().count() < 16 =>
-                {
-                    draft.push(c)
-                }
-                _ => {}
-            }
+            edit_name_input(draft, key);
         }
     }
 
@@ -573,6 +615,69 @@ impl App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[rstest::rstest]
+    #[case(false, KeyEventKind::Repeat)]
+    #[case(true, KeyEventKind::Press)]
+    fn settings_one_shot_keys_ignore_auto_repeat(
+        #[case] releases: bool,
+        #[case] repeat_kind: KeyEventKind,
+    ) {
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.keyboard_releases = releases;
+        app.menu_selection = MenuItem::Settings;
+        app.key(key(KeyCode::Enter)).unwrap();
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            repeat_kind,
+        ))
+        .unwrap();
+        assert!(app.settings.as_ref().unwrap().edit.is_none());
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ))
+        .unwrap();
+        app.settings.as_mut().unwrap().selected = 4;
+        app.key(key(KeyCode::Enter)).unwrap();
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            repeat_kind,
+        ))
+        .unwrap();
+        assert!(matches!(
+            app.settings.as_ref().unwrap().edit,
+            Some(Edit::Keys {
+                capturing: false,
+                ..
+            })
+        ));
+        app.key(key(KeyCode::F(2))).unwrap();
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::F(2),
+            KeyModifiers::NONE,
+            repeat_kind,
+        ))
+        .unwrap();
+        assert!(matches!(
+            app.settings.as_ref().unwrap().save,
+            SaveState::None
+        ));
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::F(2),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ))
+        .unwrap();
+        app.key(key(KeyCode::F(2))).unwrap();
+        assert!(matches!(
+            app.settings.as_ref().unwrap().save,
+            SaveState::Pending
+        ));
+    }
 
     #[rstest::rstest]
     fn failed_settings_draft_is_reported_after_terminal_failure(

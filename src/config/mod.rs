@@ -4,7 +4,7 @@ mod theme;
 use std::path::PathBuf;
 
 use directories::ProjectDirs;
-pub use keys::Keys;
+pub use keys::{KeyBinding, Keys};
 pub use theme::Theme;
 
 use crate::game::Mode;
@@ -101,27 +101,58 @@ pub fn database_path(db: Option<PathBuf>) -> miette::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+    use ratatui::style::Color;
+
     use super::*;
 
-    #[test]
-    fn settings_round_trip_and_reject_invalid_values() {
-        let config = Config::default();
-        let mut restored = Config::default();
-        for (name, value) in config.entries() {
-            restored.set(name, &value).unwrap();
+    #[rstest::rstest]
+    #[case("player", "")]
+    #[case("player", "                 ")]
+    #[case("player", "12345678901234567")]
+    #[case("player", "Alice\n")]
+    #[case("mode", "sprint")]
+    #[case("ghost_enabled", "yes")]
+    #[case("next_queue_length", "0")]
+    #[case("next_queue_length", "7")]
+    #[case("keys.left", "ctrl+a")]
+    #[case("theme.i", "oops")]
+    #[case("unknown", "true")]
+    fn invalid_setting_leaves_config_unchanged(#[case] name: &str, #[case] value: &str) {
+        let mut config = Config::default();
+        config.set(name, value).unwrap_err();
+        assert_eq!(config, Config::default());
+    }
+
+    proptest! {
+        #[test]
+        fn settings_entries_restore_changed_values(
+            player in "[A-Za-z가-힣]{1,16}",
+            mode in prop::sample::select(&Mode::ALL),
+            ghost_enabled in any::<bool>(),
+            next_queue_length in 1_usize..=6,
+            function_key in 1_u8..=24,
+            rgb in any::<[u8; 3]>(),
+            palette in any::<u8>(),
+        ) {
+            let mut config = Config {
+                player,
+                mode,
+                ghost_enabled,
+                next_queue_length,
+                ..Config::default()
+            };
+            config.set("keys.left", &format!("F{function_key}")).unwrap();
+            let [r, g, b] = rgb;
+            config.theme.background = Color::Rgb(r, g, b);
+            config.theme.i = Color::Indexed(palette);
+            config.validate().unwrap();
+            let mut restored = Config::default();
+            for (name, value) in config.entries() {
+                restored.set(name, &value).unwrap();
+            }
+            restored.validate().unwrap();
+            prop_assert_eq!(restored, config);
         }
-        assert_eq!(restored, config);
-        for (name, value) in [
-            ("player", ""),
-            ("mode", "sprint"),
-            ("ghost_enabled", "yes"),
-            ("next_queue_length", "7"),
-            ("keys.left", "ctrl+a"),
-            ("theme.i", "oops"),
-            ("unknown", "true"),
-        ] {
-            restored.set(name, value).unwrap_err();
-        }
-        assert_eq!(restored, config);
     }
 }

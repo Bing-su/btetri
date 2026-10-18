@@ -75,21 +75,27 @@ impl Keys {
             .split(',')
             .map(|key| key.trim().parse())
             .collect::<Result<Vec<_>, _>>()?;
-        let target = match name {
-            "keys.left" => &mut self.left,
-            "keys.right" => &mut self.right,
-            "keys.clockwise" => &mut self.clockwise,
-            "keys.counter_clockwise" => &mut self.counter_clockwise,
-            "keys.rotate_180" => &mut self.rotate_180,
-            "keys.hard_drop" => &mut self.hard_drop,
-            "keys.soft_drop" => &mut self.soft_drop,
-            "keys.hold" => &mut self.hold,
-            "keys.pause" => &mut self.pause,
-            "keys.help" => &mut self.help,
-            _ => return Err(format!("unknown key setting {name}")),
-        };
+        let target = self
+            .bindings_mut(name)
+            .ok_or_else(|| format!("unknown key setting {name}"))?;
         *target = keys;
         Ok(())
+    }
+
+    pub fn bindings_mut(&mut self, name: &str) -> Option<&mut Vec<KeyBinding>> {
+        match name {
+            "keys.left" => Some(&mut self.left),
+            "keys.right" => Some(&mut self.right),
+            "keys.clockwise" => Some(&mut self.clockwise),
+            "keys.counter_clockwise" => Some(&mut self.counter_clockwise),
+            "keys.rotate_180" => Some(&mut self.rotate_180),
+            "keys.hard_drop" => Some(&mut self.hard_drop),
+            "keys.soft_drop" => Some(&mut self.soft_drop),
+            "keys.hold" => Some(&mut self.hold),
+            "keys.pause" => Some(&mut self.pause),
+            "keys.help" => Some(&mut self.help),
+            _ => None,
+        }
     }
 
     fn actions(&self) -> [(Action, &[KeyBinding]); 8] {
@@ -112,21 +118,8 @@ impl Keys {
     }
 
     pub fn matches(bindings: &[KeyBinding], key: KeyEvent) -> bool {
-        // Ctrl is also a rotation key, so holding it must still allow movement, e.g. Ctrl+Left.
-        if key.modifiers.contains(KeyModifiers::ALT) {
-            return false;
-        }
-        let code = match key.code {
-            KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
-            KeyCode::Modifier(ModifierKeyCode::RightShift) => {
-                KeyCode::Modifier(ModifierKeyCode::LeftShift)
-            }
-            KeyCode::Modifier(ModifierKeyCode::RightControl) => {
-                KeyCode::Modifier(ModifierKeyCode::LeftControl)
-            }
-            code => code,
-        };
-        bindings.contains(&KeyBinding(code))
+        // Capture and gameplay share normalization, e.g. either Ctrl key resolves to CTRL.
+        KeyBinding::from_event(key).is_ok_and(|binding| bindings.contains(&binding))
     }
 
     pub fn label(bindings: &[KeyBinding]) -> String {
@@ -137,10 +130,11 @@ impl Keys {
 
     pub(super) fn validate(&self) -> Result<(), String> {
         let mut seen = HashSet::new();
-        let mut groups: Vec<&[KeyBinding]> =
-            self.actions().into_iter().map(|(_, keys)| keys).collect();
-        groups.extend([self.pause.as_slice(), self.help.as_slice()]);
-        if groups.iter().any(|keys| keys.is_empty()) {
+        let groups = self.actions().map(|(_, keys)| keys);
+        let groups = groups
+            .into_iter()
+            .chain([self.pause.as_slice(), self.help.as_slice()]);
+        if groups.clone().any(|keys| keys.is_empty()) {
             return Err("every action needs at least one key".into());
         }
         for key in groups.into_iter().flatten() {
@@ -171,6 +165,20 @@ impl FromStr for KeyBinding {
             "down" => Some(KeyCode::Down),
             "shift" => Some(KeyCode::Modifier(ModifierKeyCode::LeftShift)),
             "ctrl" => Some(KeyCode::Modifier(ModifierKeyCode::LeftControl)),
+            "backspace" => Some(KeyCode::Backspace),
+            "delete" => Some(KeyCode::Delete),
+            "insert" => Some(KeyCode::Insert),
+            "home" => Some(KeyCode::Home),
+            "end" => Some(KeyCode::End),
+            "pageup" => Some(KeyCode::PageUp),
+            "pagedown" => Some(KeyCode::PageDown),
+            "tab" => Some(KeyCode::Tab),
+            "backtab" => Some(KeyCode::BackTab),
+            key if key.starts_with('f') && key.len() > 1 => key
+                .strip_prefix('f')
+                .and_then(|number| number.parse::<u8>().ok())
+                .filter(|n| (1..=24).contains(n))
+                .map(KeyCode::F),
             _ => {
                 let mut chars = key.chars();
                 chars
@@ -184,12 +192,48 @@ impl FromStr for KeyBinding {
     }
 }
 
+impl KeyBinding {
+    pub fn from_event(key: KeyEvent) -> Result<Self, String> {
+        if key.modifiers.contains(KeyModifiers::ALT) {
+            return Err("Use a single key without Alt".into());
+        }
+        let code = match key.code {
+            KeyCode::Char(c) if !c.is_control() => KeyCode::Char(c.to_ascii_lowercase()),
+            KeyCode::Modifier(ModifierKeyCode::RightControl | ModifierKeyCode::LeftControl) => {
+                KeyCode::Modifier(ModifierKeyCode::LeftControl)
+            }
+            KeyCode::Modifier(ModifierKeyCode::RightShift | ModifierKeyCode::LeftShift) => {
+                KeyCode::Modifier(ModifierKeyCode::LeftShift)
+            }
+            KeyCode::F(1..=24)
+            | KeyCode::Enter
+            | KeyCode::Esc
+            | KeyCode::Backspace
+            | KeyCode::Delete
+            | KeyCode::Insert
+            | KeyCode::Home
+            | KeyCode::End
+            | KeyCode::PageUp
+            | KeyCode::PageDown
+            | KeyCode::Tab
+            | KeyCode::BackTab
+            | KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Up
+            | KeyCode::Down => key.code,
+            _ => return Err("Unsupported key; choose another key".into()),
+        };
+        Ok(Self(code))
+    }
+}
+
 impl fmt::Display for KeyBinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
             KeyCode::Char(' ') => f.write_str("SPACE"),
             KeyCode::Char(',') => f.write_str("COMMA"),
             KeyCode::Char(c) => write!(f, "{}", c.to_ascii_uppercase()),
+            KeyCode::F(number) => write!(f, "F{number}"),
             KeyCode::Modifier(ModifierKeyCode::LeftShift) => f.write_str("SHIFT"),
             KeyCode::Modifier(ModifierKeyCode::LeftControl) => f.write_str("CTRL"),
             code => f.write_str(&format!("{code:?}").to_uppercase()),
@@ -199,39 +243,104 @@ impl fmt::Display for KeyBinding {
 
 #[cfg(test)]
 mod tests {
+    use proptest::prelude::*;
+    use rstest::rstest;
+
     use super::*;
 
-    #[test]
-    fn default_controls_and_modifier_aliases_keep_working() {
+    #[rstest]
+    #[case(KeyCode::Left, Action::Left)]
+    #[case(KeyCode::Right, Action::Right)]
+    #[case(KeyCode::Up, Action::Clockwise)]
+    #[case(KeyCode::Char('X'), Action::Clockwise)]
+    #[case(KeyCode::Char('z'), Action::CounterClockwise)]
+    #[case(KeyCode::Char('a'), Action::Rotate180)]
+    #[case(KeyCode::Char(' '), Action::HardDrop)]
+    #[case(KeyCode::Down, Action::SoftDrop)]
+    #[case(KeyCode::Char('c'), Action::Hold)]
+    #[case(KeyCode::Modifier(ModifierKeyCode::RightShift), Action::Hold)]
+    #[case(
+        KeyCode::Modifier(ModifierKeyCode::RightControl),
+        Action::CounterClockwise
+    )]
+    fn default_controls_and_modifier_aliases_keep_working(
+        #[case] code: KeyCode,
+        #[case] action: Action,
+        #[values(KeyModifiers::NONE, KeyModifiers::CONTROL, KeyModifiers::SHIFT)]
+        modifiers: KeyModifiers,
+    ) {
         let keys = Keys::default();
         keys.validate().unwrap();
-        for (code, action) in [
-            (KeyCode::Left, Action::Left),
-            (KeyCode::Right, Action::Right),
-            (KeyCode::Up, Action::Clockwise),
-            (KeyCode::Char('X'), Action::Clockwise),
-            (KeyCode::Char('z'), Action::CounterClockwise),
-            (KeyCode::Char('a'), Action::Rotate180),
-            (KeyCode::Char(' '), Action::HardDrop),
-            (KeyCode::Down, Action::SoftDrop),
-            (KeyCode::Char('c'), Action::Hold),
-            (KeyCode::Modifier(ModifierKeyCode::RightShift), Action::Hold),
-            (
-                KeyCode::Modifier(ModifierKeyCode::RightControl),
-                Action::CounterClockwise,
-            ),
-        ] {
-            assert_eq!(
-                keys.action(KeyEvent::new(code, KeyModifiers::CONTROL)),
-                Some(action)
-            );
-            assert_eq!(keys.action(KeyEvent::new(code, KeyModifiers::ALT)), None);
-        }
-        for name in [
-            "SPACE", "COMMA", "ß", "김", "CTRL", "SHIFT", "ESC", "?", "ENTER", "LEFT",
-        ] {
-            let key: KeyBinding = name.parse().unwrap();
-            assert_eq!(key.to_string().parse::<KeyBinding>().unwrap(), key);
+        assert_eq!(keys.action(KeyEvent::new(code, modifiers)), Some(action));
+        assert_eq!(keys.action(KeyEvent::new(code, KeyModifiers::ALT)), None);
+    }
+
+    #[rstest]
+    fn captured_keys_survive_storage_round_trip(
+        #[values(
+            KeyCode::F(2),
+            KeyCode::F(24),
+            KeyCode::Esc,
+            KeyCode::Enter,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+            KeyCode::Insert,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Tab,
+            KeyCode::BackTab,
+            KeyCode::Char(','),
+            KeyCode::Char('ß'),
+            KeyCode::Char('김'),
+            KeyCode::Char(' '),
+            KeyCode::Char('?'),
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Modifier(ModifierKeyCode::RightControl),
+            KeyCode::Modifier(ModifierKeyCode::RightShift)
+        )]
+        code: KeyCode,
+    ) {
+        let key = KeyBinding::from_event(KeyEvent::new(code, KeyModifiers::NONE)).unwrap();
+        assert_eq!(key.to_string().parse::<KeyBinding>().unwrap(), key);
+        assert!(Keys::matches(
+            &[key],
+            KeyEvent::new(code, KeyModifiers::NONE)
+        ));
+    }
+
+    #[rstest]
+    fn empty_or_duplicate_bindings_are_rejected(
+        #[values("keys.left", "keys.pause", "keys.help")] name: &str,
+        #[values("", "right", "g, g")] value: &str,
+    ) {
+        let mut keys = Keys::default();
+        *keys.bindings_mut(name).unwrap() = if value.is_empty() {
+            Vec::new()
+        } else {
+            value.split(", ").map(|key| key.parse().unwrap()).collect()
+        };
+        keys.validate().unwrap_err();
+    }
+
+    proptest! {
+        #[test]
+        fn printable_keys_and_function_keys_round_trip(
+            code in prop_oneof![
+                any::<char>().prop_filter("printable key", |c| !c.is_control()).prop_map(KeyCode::Char),
+                (1_u8..=24).prop_map(KeyCode::F),
+            ],
+        ) {
+            let event = KeyEvent::new(code, KeyModifiers::NONE);
+            let binding = KeyBinding::from_event(event).unwrap();
+            let restored: KeyBinding = binding.to_string().parse().unwrap();
+            prop_assert_eq!(restored, binding);
+            prop_assert!(Keys::matches(&[restored], event));
+            prop_assert!(!Keys::matches(&[restored], KeyEvent::new(code, KeyModifiers::ALT)));
         }
     }
 }
