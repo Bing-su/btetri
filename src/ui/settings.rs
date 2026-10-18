@@ -19,7 +19,15 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
         ("CANCEL", String::new()),
     ]);
     let field = entries.get(settings.selected).map_or("", |(name, _)| *name);
-    let hint = if field.starts_with("keys.") {
+    let hint = if matches!(field, "das_ms" | "arr_ms" | "soft_drop_ms") && !app.keyboard_releases {
+        "Terminal has no key releases; OS key repeat applies."
+    } else if field == "das_ms" {
+        "Delay before horizontal repeat. Left/Right: 10 ms."
+    } else if field == "arr_ms" {
+        "Horizontal repeat interval; 0 = move to wall after DAS."
+    } else if field == "soft_drop_ms" {
+        "Drop interval without DAS; 0 = drop to floor without locking."
+    } else if field.starts_with("keys.") {
         "Enter opens key bindings; press a key to assign it"
     } else if field.starts_with("theme.") {
         "Enter opens palette / RGB color picker"
@@ -102,11 +110,16 @@ fn setting_rows(
         } else {
             app.config.theme.foreground
         });
-        let label = name
-            .replace("keys.", "KEY ")
-            .replace("theme.", "COLOR ")
-            .replace('_', " ")
-            .to_uppercase();
+        let label = match *name {
+            "das_ms" => "DAS".into(),
+            "arr_ms" => "ARR".into(),
+            "soft_drop_ms" => "SOFT DROP".into(),
+            _ => name
+                .replace("keys.", "KEY ")
+                .replace("theme.", "COLOR ")
+                .replace('_', " ")
+                .to_uppercase(),
+        };
         frame.render_widget(
             Paragraph::new(format!("{} {label}", if selected { ">" } else { " " })).style(style),
             Rect::new(area.x + 2, y, 30, 1),
@@ -120,6 +133,7 @@ fn setting_rows(
                 "ghost_enabled" => "< OFF >".into(),
                 "mode" => format!("< {} >", settings.config.mode.label()),
                 "next_queue_length" => format!("< {} >", settings.config.next_queue_length),
+                "das_ms" | "arr_ms" | "soft_drop_ms" => format!("< {value} ms >"),
                 _ => value.clone(),
             }
         };
@@ -290,6 +304,53 @@ mod tests {
     use crate::config::Config;
 
     #[rstest::rstest]
+    #[case("das_ms", "DAS", "150 ms", "Delay before horizontal repeat")]
+    #[case("arr_ms", "ARR", "30 ms", "0 = move to wall after DAS")]
+    #[case("soft_drop_ms", "SOFT DROP", "30 ms", "Drop interval without DAS")]
+    fn input_timings_show_units_and_terminal_support(
+        #[case] name: &str,
+        #[case] label: &str,
+        #[case] value: &str,
+        #[case] hint: &str,
+        #[values(false, true)] releases: bool,
+        #[values((80, 28), (100, 40))] size: (u16, u16),
+    ) {
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.screen = Screen::Settings;
+        app.keyboard_releases = releases;
+        let mut draft = Settings::new(app.config.clone());
+        draft.selected = draft
+            .config
+            .entries()
+            .iter()
+            .position(|&(field, _)| field == name)
+            .unwrap();
+        app.settings = Some(draft);
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal
+            .draw(|frame| super::super::draw(frame, &app))
+            .unwrap();
+        let text: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        for expected in [
+            format!("> {label}"),
+            format!("< {value} >"),
+            if releases {
+                hint.into()
+            } else {
+                "OS key repeat applies".into()
+            },
+        ] {
+            assert!(text.contains(&expected), "missing {expected}");
+        }
+    }
+
+    #[rstest::rstest]
     #[case(80, 28)]
     #[case(100, 40)]
     fn typed_editors_show_controls_and_color_preview(
@@ -300,7 +361,7 @@ mod tests {
         let mut app = App::try_from(Config::default()).unwrap();
         app.screen = Screen::Settings;
         app.settings = Some(Settings::new(app.config.clone()));
-        app.settings.as_mut().unwrap().selected = 14;
+        app.settings.as_mut().unwrap().selected = 17;
         let key =
             |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
@@ -327,7 +388,7 @@ mod tests {
             assert!(text.contains(label), "missing {label}");
         }
         app.key(key(crossterm::event::KeyCode::Esc)).unwrap();
-        app.settings.as_mut().unwrap().selected = 4;
+        app.settings.as_mut().unwrap().selected = 7;
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
         terminal

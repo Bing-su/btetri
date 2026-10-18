@@ -145,6 +145,8 @@ pub struct App {
     pub(crate) quit: bool,
     pub(crate) keyboard_releases: bool,
     soft_drop_keys: Vec<KeyCode>,
+    horizontal_keys: Vec<(KeyCode, Action)>,
+    horizontal_wait: Duration,
     pressed_actions: Vec<KeyCode>,
 }
 
@@ -174,6 +176,8 @@ impl TryFrom<Config> for App {
             quit: false,
             keyboard_releases: false,
             soft_drop_keys: Vec::new(),
+            horizontal_keys: Vec::new(),
+            horizontal_wait: Duration::ZERO,
             pressed_actions: Vec::new(),
         })
     }
@@ -297,13 +301,32 @@ impl App {
         result
     }
 
-    pub fn advance(&mut self, duration: Duration) -> miette::Result<()> {
-        if self.screen == Screen::Playing {
-            if let Some(game) = &mut self.game {
-                game.advance(duration);
-            }
-            self.finish_if_needed()?;
+    pub fn advance(&mut self, mut duration: Duration) -> miette::Result<()> {
+        if self.screen != Screen::Playing {
+            return Ok(());
         }
+        let Some(game) = &mut self.game else {
+            return Ok(());
+        };
+        // Interleave repeats with game time, e.g. a slow frame must not drop before moving.
+        while !duration.is_zero() && game.status() == Status::Playing {
+            let horizontal = self.horizontal_keys.last().map(|&(_, action)| action);
+            let mut step = duration.min(Duration::from_millis(10));
+            if horizontal.is_some() {
+                step = step.min(self.horizontal_wait);
+            }
+            game.advance(step);
+            duration = duration.saturating_sub(step);
+            self.horizontal_wait = self.horizontal_wait.saturating_sub(step);
+            if let Some(action) = horizontal
+                && self.horizontal_wait.is_zero()
+                && game.status() == Status::Playing
+            {
+                repeat_action(game, action, self.config.arr_ms == 0);
+                self.horizontal_wait = Duration::from_millis(self.config.arr_ms.max(1));
+            }
+        }
+        self.finish_if_needed()?;
         Ok(())
     }
 
@@ -316,6 +339,7 @@ impl App {
             self.save = SaveState::Pending;
             self.screen = Screen::GameOver;
             self.dialog_selection = 0;
+            self.clear_held_keys();
         }
         Ok(())
     }
@@ -344,6 +368,12 @@ impl App {
                 code => code,
             };
             self.pressed_actions.retain(|&code| code != released);
+            let previous = self.horizontal_keys.last().copied();
+            self.horizontal_keys.retain(|&(code, _)| code != released);
+            if self.horizontal_keys.last().copied() != previous {
+                // Releasing the newest direction recharges DAS for the remaining key.
+                self.horizontal_wait = Duration::from_millis(self.config.das_ms);
+            }
             self.soft_drop_keys.retain(|&code| match (code, key.code) {
                 (KeyCode::Char(held), KeyCode::Char(released)) => {
                     !held.eq_ignore_ascii_case(&released)
@@ -496,6 +526,47 @@ impl App {
         let Some(action) = self.config.keys.action(key) else {
             return Ok(());
         };
+        if self.keyboard_releases
+            && matches!(action, Action::Left | Action::Right | Action::SoftDrop)
+        {
+            let code = match key.code {
+                KeyCode::Char(c) => KeyCode::Char(c.to_ascii_lowercase()),
+                code => code,
+            };
+            if key.kind != KeyEventKind::Press
+                || self.horizontal_keys.iter().any(|&(held, _)| held == code)
+                || self.soft_drop_keys.contains(&code)
+            {
+                return Ok(());
+            }
+            if action == Action::SoftDrop && !self.soft_drop_keys.is_empty() {
+                self.soft_drop_keys.push(code);
+                return Ok(());
+            }
+            if action == Action::SoftDrop {
+                self.soft_drop_keys.push(code);
+            } else {
+                self.horizontal_keys.push((code, action));
+                self.horizontal_wait = Duration::from_millis(self.config.das_ms);
+            }
+            if action == Action::SoftDrop
+                && let Some(game) = &mut self.game
+            {
+                game.set_soft_drop_interval(Duration::from_millis(self.config.soft_drop_ms));
+                game.set_soft_drop(true);
+            }
+            if let Some(game) = &mut self.game {
+                repeat_action(
+                    game,
+                    action,
+                    action == Action::SoftDrop && self.config.soft_drop_ms == 0
+                        || action != Action::SoftDrop
+                            && self.config.das_ms == 0
+                            && self.config.arr_ms == 0,
+                );
+            }
+            return self.finish_if_needed();
+        }
         if key.kind == KeyEventKind::Repeat
             && !matches!(action, Action::Left | Action::Right | Action::SoftDrop)
         {
@@ -517,24 +588,15 @@ impl App {
         let Some(game) = &mut self.game else {
             return Ok(());
         };
-        if action == Action::SoftDrop && self.keyboard_releases {
-            if key.kind != KeyEventKind::Press || self.soft_drop_keys.contains(&key.code) {
-                return Ok(());
-            }
-            self.soft_drop_keys.push(key.code);
-            if !game.soft_drop() {
-                game.apply(action);
-                game.set_soft_drop(true);
-            }
-        } else {
-            game.apply(action);
-        }
+        game.apply(action);
         self.finish_if_needed()
     }
 
     fn clear_held_keys(&mut self) {
         // Focus loss or a dialog can swallow releases, e.g. Alt-Tab while holding Down.
         self.soft_drop_keys.clear();
+        self.horizontal_keys.clear();
+        self.horizontal_wait = Duration::ZERO;
         if let Some(game) = &mut self.game {
             game.set_soft_drop(false);
         }
@@ -612,9 +674,298 @@ impl App {
     }
 }
 
+fn repeat_action(game: &mut Game, action: Action, instant: bool) {
+    let limit = if instant { crate::game::HEIGHT } else { 1 };
+    let board = instant.then(|| *game.board());
+    for _ in 0..limit {
+        let before = game.active();
+        game.apply(action);
+        let after = game.active();
+        // Stop at an obstacle or a newly spawned piece, e.g. an exhausted lock delay.
+        let moved = match action {
+            Action::Left => after.x == before.x - 1 && after.y == before.y,
+            Action::Right => after.x == before.x + 1 && after.y == before.y,
+            Action::SoftDrop => after.y == before.y + 1 && after.x == before.x,
+            _ => false,
+        };
+        if !moved
+            || game.status() != Status::Playing
+            || board.as_ref().is_some_and(|before| before != game.board())
+        {
+            break;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn release(app: &mut App, code: KeyCode) {
+        app.key(KeyEvent::new_with_kind(
+            code,
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ))
+        .unwrap();
+    }
+
+    #[rstest::rstest]
+    #[case(KeyCode::Left, -1)]
+    #[case(KeyCode::Right, 1)]
+    fn horizontal_repeat_obeys_das_arr_and_release(#[case] code: KeyCode, #[case] delta: i32) {
+        let mut app = App::try_from(Config::default()).unwrap();
+        app.keyboard_releases = true;
+        app.start();
+        let x = app.game.as_ref().unwrap().active().x;
+        app.key(key(code)).unwrap();
+        for kind in [KeyEventKind::Press, KeyEventKind::Repeat] {
+            app.key(KeyEvent::new_with_kind(code, KeyModifiers::NONE, kind))
+                .unwrap();
+        }
+        assert_eq!(app.game.as_ref().unwrap().active().x, x + delta);
+        app.advance(Duration::from_millis(149)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x + delta);
+        app.advance(Duration::from_millis(1)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x + 2 * delta);
+        app.advance(Duration::from_millis(29)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x + 2 * delta);
+        app.advance(Duration::from_millis(1)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x + 3 * delta);
+        release(&mut app, code);
+        app.advance(Duration::from_millis(300)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x + 3 * delta);
+    }
+
+    #[test]
+    fn latest_direction_wins_and_release_recharges_the_remaining_binding() {
+        let mut config = Config::default();
+        config.set("keys.left", "left, j").unwrap();
+        let mut app = App::try_from(config).unwrap();
+        app.keyboard_releases = true;
+        app.start();
+        let x = app.game.as_ref().unwrap().active().x;
+        app.key(key(KeyCode::Left)).unwrap();
+        app.key(key(KeyCode::Right)).unwrap();
+        app.advance(Duration::from_millis(150)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x + 1);
+        app.key(key(KeyCode::Char('j'))).unwrap();
+        release(&mut app, KeyCode::Left);
+        app.advance(Duration::from_millis(150)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x - 1);
+        release(&mut app, KeyCode::Char('J'));
+        app.advance(Duration::from_millis(149)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x - 1);
+        app.advance(Duration::from_millis(1)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x);
+    }
+
+    #[rstest::rstest]
+    #[case(KeyCode::Left, 0)]
+    #[case(KeyCode::Right, 9)]
+    fn zero_arr_moves_to_the_wall_after_das(#[case] code: KeyCode, #[case] edge: i32) {
+        let mut app = App::try_from(Config {
+            arr_ms: 0,
+            ..Config::default()
+        })
+        .unwrap();
+        app.keyboard_releases = true;
+        app.start();
+        app.key(key(code)).unwrap();
+        app.advance(Duration::from_millis(149)).unwrap();
+        assert!(
+            !app.game
+                .as_ref()
+                .unwrap()
+                .active()
+                .cells()
+                .iter()
+                .any(|&(x, _)| x == edge)
+        );
+        app.advance(Duration::from_millis(1)).unwrap();
+        assert!(
+            app.game
+                .as_ref()
+                .unwrap()
+                .active()
+                .cells()
+                .iter()
+                .any(|&(x, _)| x == edge)
+        );
+        assert!(
+            app.game
+                .as_ref()
+                .unwrap()
+                .board()
+                .iter()
+                .flatten()
+                .all(Option::is_none)
+        );
+    }
+
+    #[test]
+    fn zero_das_and_arr_move_to_the_wall_on_press() {
+        let mut app = App::try_from(Config {
+            das_ms: 0,
+            arr_ms: 0,
+            ..Config::default()
+        })
+        .unwrap();
+        app.keyboard_releases = true;
+        app.start();
+        app.key(key(KeyCode::Left)).unwrap();
+        assert!(
+            app.game
+                .as_ref()
+                .unwrap()
+                .active()
+                .cells()
+                .iter()
+                .any(|&(x, _)| x == 0)
+        );
+        app.advance(Duration::from_millis(20)).unwrap();
+        assert_eq!(app.screen, Screen::Playing);
+    }
+
+    #[rstest::rstest]
+    fn soft_drop_repeats_at_its_interval_without_das_or_os_repeats(
+        #[values(400, 820)] initial_ms: u64,
+    ) {
+        let mut app = App::try_from(Config {
+            das_ms: 1000,
+            soft_drop_ms: 20,
+            ..Config::default()
+        })
+        .unwrap();
+        app.keyboard_releases = true;
+        app.start();
+        // Press between gravity ticks, e.g. holding Down must not inherit an old timer.
+        app.advance(Duration::from_millis(initial_ms)).unwrap();
+        let y = app.game.as_ref().unwrap().active().y;
+        app.key(key(KeyCode::Down)).unwrap();
+        app.key(key(KeyCode::Down)).unwrap();
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::Down,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ))
+        .unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().y, y + 1);
+        app.advance(Duration::from_millis(19)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().y, y + 1);
+        app.advance(Duration::from_millis(1)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().y, y + 2);
+        app.advance(Duration::from_millis(40)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().y, y + 4);
+        assert_eq!(app.game.as_ref().unwrap().score(), 4);
+        release(&mut app, KeyCode::Down);
+        app.advance(Duration::from_millis(100)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().y, y + 4);
+    }
+
+    #[test]
+    fn held_soft_drop_keeps_natural_gravity_and_awards_each_descended_cell() {
+        let mut app = App::try_from(Config {
+            soft_drop_ms: 1000,
+            ..Config::default()
+        })
+        .unwrap();
+        app.keyboard_releases = true;
+        app.start();
+        let y = app.game.as_ref().unwrap().active().y;
+        app.key(key(KeyCode::Down)).unwrap();
+        app.advance(Duration::from_millis(900)).unwrap();
+        let game = app.game.as_ref().unwrap();
+        assert_eq!(game.active().y, y + 2);
+        assert_eq!(game.score(), 2);
+    }
+
+    #[test]
+    fn zero_soft_drop_reaches_floor_and_preserves_lock_delay_and_points() {
+        let mut app = App::try_from(Config {
+            soft_drop_ms: 0,
+            ..Config::default()
+        })
+        .unwrap();
+        app.keyboard_releases = true;
+        app.start();
+        let game = app.game.as_ref().unwrap();
+        let initial = game.active();
+        let floor = game.ghost();
+        app.key(key(KeyCode::Down)).unwrap();
+        let game = app.game.as_ref().unwrap();
+        assert_eq!(game.active(), floor);
+        assert_eq!(game.score(), u64::try_from(floor.y - initial.y).unwrap());
+        assert!(game.board().iter().flatten().all(Option::is_none));
+        release(&mut app, KeyCode::Down);
+        app.advance(Duration::from_millis(499)).unwrap();
+        assert!(
+            app.game
+                .as_ref()
+                .unwrap()
+                .board()
+                .iter()
+                .flatten()
+                .all(Option::is_none)
+        );
+        app.advance(Duration::from_millis(1)).unwrap();
+        assert!(
+            app.game
+                .as_ref()
+                .unwrap()
+                .board()
+                .iter()
+                .flatten()
+                .any(Option::is_some)
+        );
+    }
+
+    #[test]
+    fn repeat_timing_is_preserved_across_frames_with_both_axes_held() {
+        let make_app = || {
+            let mut app = App::try_from(Config::default()).unwrap();
+            app.keyboard_releases = true;
+            app.start();
+            app.game = Some(Game::new(Mode::FortyLines, 42));
+            app.key(key(KeyCode::Right)).unwrap();
+            app.key(key(KeyCode::Down)).unwrap();
+            app
+        };
+        let mut slow = make_app();
+        let mut fast = make_app();
+        slow.advance(Duration::from_millis(300)).unwrap();
+        for _ in 0..300 {
+            fast.advance(Duration::from_millis(1)).unwrap();
+        }
+        let a = slow.game.as_ref().unwrap();
+        let b = fast.game.as_ref().unwrap();
+        assert_eq!(a.active(), b.active());
+        assert_eq!(a.board(), b.board());
+        assert_eq!(a.score(), b.score());
+        assert_eq!(a.elapsed(), b.elapsed());
+    }
+
+    #[test]
+    fn legacy_horizontal_input_keeps_os_repeat_without_latching() {
+        let mut app = App::try_from(Config {
+            das_ms: 0,
+            arr_ms: 0,
+            ..Config::default()
+        })
+        .unwrap();
+        app.start();
+        let x = app.game.as_ref().unwrap().active().x;
+        app.key(key(KeyCode::Left)).unwrap();
+        app.key(KeyEvent::new_with_kind(
+            KeyCode::Left,
+            KeyModifiers::NONE,
+            KeyEventKind::Repeat,
+        ))
+        .unwrap();
+        app.advance(Duration::from_millis(300)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x - 2);
+        assert!(app.horizontal_keys.is_empty());
+    }
 
     #[rstest::rstest]
     #[case(false, KeyEventKind::Repeat)]
@@ -640,7 +991,7 @@ mod tests {
             KeyEventKind::Release,
         ))
         .unwrap();
-        app.settings.as_mut().unwrap().selected = 4;
+        app.settings.as_mut().unwrap().selected = 7;
         app.key(key(KeyCode::Enter)).unwrap();
         app.key(KeyEvent::new_with_kind(
             KeyCode::Enter,
@@ -856,6 +1207,7 @@ mod tests {
             KeyEventKind::Release,
         ))
         .unwrap();
+        assert!(!app.soft_drop_keys.is_empty());
         assert!(app.game.as_ref().unwrap().soft_drop());
         app.advance(Duration::from_millis(50)).unwrap();
         assert_eq!(app.game.as_ref().unwrap().active().y, initial_y + 2);
@@ -865,6 +1217,7 @@ mod tests {
             KeyEventKind::Release,
         ))
         .unwrap();
+        assert!(app.soft_drop_keys.is_empty());
         assert!(!app.game.as_ref().unwrap().soft_drop());
     }
 
@@ -884,6 +1237,39 @@ mod tests {
         let game = app.game.as_ref().unwrap();
         assert_eq!(game.active().y, initial_y + 2);
         assert!(!game.soft_drop());
+    }
+
+    #[rstest::rstest]
+    fn rapid_half_turns_preserve_gravity(
+        #[values(false, true)] keyboard_releases: bool,
+        #[values(Mode::FortyLines, Mode::Blitz, Mode::Practice)] mode: Mode,
+    ) {
+        for seed in 0..32 {
+            let mut app = App::try_from(Config {
+                mode,
+                ..Config::default()
+            })
+            .unwrap();
+            app.keyboard_releases = keyboard_releases;
+            app.start();
+            app.game = Some(Game::new(mode, seed));
+            let mut idle = Game::new(mode, seed);
+            // Compare equal elapsed time, e.g. 100 taps must not postpone the next gravity tick.
+            for _ in 0..100 {
+                app.key(key(KeyCode::Char('a'))).unwrap();
+                if keyboard_releases {
+                    release(&mut app, KeyCode::Char('a'));
+                }
+                app.advance(Duration::from_millis(20)).unwrap();
+                idle.advance(Duration::from_millis(20));
+                let actual = app.game.as_ref().unwrap();
+                assert_eq!(actual.active().y, idle.active().y, "seed {seed}");
+                assert_eq!(actual.elapsed(), idle.elapsed());
+            }
+            let actual = app.game.as_ref().unwrap();
+            assert_eq!(actual.active(), idle.active(), "seed {seed}");
+            assert!(actual.active().y > Game::new(mode, seed).active().y);
+        }
     }
 
     #[test]
@@ -916,16 +1302,23 @@ mod tests {
         app.keyboard_releases = true;
         app.start();
         app.key(key(KeyCode::Down)).unwrap();
+        assert!(!app.soft_drop_keys.is_empty());
         assert!(app.game.as_ref().unwrap().soft_drop());
+        app.key(key(KeyCode::Left)).unwrap();
+        let x = app.game.as_ref().unwrap().active().x;
         if let Some(code) = dialog {
             app.key(key(code)).unwrap();
         } else {
             app.pause_for_resize();
         }
-        assert!(!app.game.as_ref().unwrap().soft_drop());
         assert!(app.soft_drop_keys.is_empty());
+        assert!(!app.game.as_ref().unwrap().soft_drop());
+        assert!(app.horizontal_keys.is_empty());
         app.key(key(KeyCode::Esc)).unwrap();
+        app.advance(Duration::from_millis(300)).unwrap();
+        assert_eq!(app.game.as_ref().unwrap().active().x, x);
         app.key(key(KeyCode::Down)).unwrap();
+        assert!(!app.soft_drop_keys.is_empty());
         assert!(app.game.as_ref().unwrap().soft_drop());
     }
 

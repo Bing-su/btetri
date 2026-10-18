@@ -64,6 +64,7 @@ pub struct Game {
     lowest_y: i32,
     lock_started: bool,
     soft_drop: bool,
+    soft_drop_interval: Option<Duration>,
     status: Status,
 }
 
@@ -89,6 +90,7 @@ impl Game {
             lowest_y: 0,
             lock_started: false,
             soft_drop: false,
+            soft_drop_interval: None,
             status: Status::Playing,
         };
         game.spawn_next(false);
@@ -151,6 +153,17 @@ impl Game {
         if self.soft_drop != pressed {
             self.soft_drop = pressed;
             self.gravity_elapsed = Duration::ZERO;
+        }
+    }
+
+    /// Override held soft-drop speed; for example, 30 ms moves a row every 30 ms.
+    /// Zero drops to the floor on the next tick. Normal gravity is always the minimum speed.
+    pub fn set_soft_drop_interval(&mut self, interval: Duration) {
+        if self.soft_drop_interval != Some(interval) {
+            self.soft_drop_interval = Some(interval);
+            if self.soft_drop {
+                self.gravity_elapsed = Duration::ZERO;
+            }
         }
     }
 
@@ -227,6 +240,7 @@ impl Game {
     fn advance_piece(&mut self, step: Duration) {
         self.gravity_elapsed += step;
         let interval = self.gravity_interval();
+        // Zero drains the free rows this tick; an obstacle ends the loop, e.g. the floor.
         while self.gravity_elapsed >= interval {
             self.gravity_elapsed -= interval;
             let lowered = ActivePiece {
@@ -280,11 +294,14 @@ impl Game {
 
     fn gravity_interval(&self) -> Duration {
         let seconds = self.mode.gravity_seconds(self.level());
-        Duration::from_secs_f64(if self.soft_drop {
-            seconds / 20.0
+        let gravity = Duration::from_secs_f64(seconds);
+        if self.soft_drop {
+            self.soft_drop_interval
+                .unwrap_or_else(|| Duration::from_secs_f64(seconds / 20.0))
+                .min(gravity)
         } else {
-            seconds
-        })
+            gravity
+        }
     }
 
     fn occupied(&self, x: i32, y: i32) -> bool {

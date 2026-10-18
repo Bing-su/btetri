@@ -7,7 +7,7 @@
 | Module            | Responsibility                                                     |
 | ----------------- | ------------------------------------------------------------------ |
 | `game`            | Public deterministic engine; modes, pieces, scoring                |
-| `app`             | Screen transitions, input, save/load lifecycle                     |
+| `app`             | Screen transitions, DAS/ARR, held inputs, save/load lifecycle      |
 | `app/settings`    | Settings draft and typed editors                                   |
 | `ui`              | Ratatui layout, gameplay, settings, and records rendering          |
 | `config`          | Validated settings, key bindings, palette, database path           |

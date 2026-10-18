@@ -497,6 +497,59 @@ fn soft_drop_steps_scores_and_held_state_is_idempotent() {
 }
 
 #[test]
+fn configured_soft_drop_interval_restarts_only_when_changed() {
+    let mut game = game();
+    let y = game.active().y;
+    game.set_soft_drop_interval(Duration::from_millis(30));
+    game.set_soft_drop(true);
+    game.advance(Duration::from_millis(20));
+    game.set_soft_drop_interval(Duration::from_millis(30));
+    game.advance(Duration::from_millis(10));
+    assert_eq!(game.active().y, y + 1);
+    assert_eq!(game.score(), 1);
+    game.advance(Duration::from_millis(20));
+    game.set_soft_drop_interval(Duration::from_millis(40));
+    game.advance(Duration::from_millis(39));
+    assert_eq!(game.active().y, y + 1);
+    game.advance(Duration::from_millis(1));
+    assert_eq!(game.active().y, y + 2);
+    assert_eq!(game.score(), 2);
+}
+
+#[test]
+fn zero_soft_drop_interval_reaches_floor_and_keeps_lock_delay() {
+    let mut game = game();
+    let y = game.active().y;
+    let floor = game.ghost();
+    game.set_soft_drop_interval(Duration::ZERO);
+    game.set_soft_drop(true);
+    game.advance(Duration::from_millis(1));
+    assert_eq!(game.active(), floor);
+    assert_eq!(game.score(), u64::try_from(floor.y - y).unwrap());
+    game.advance(Duration::from_millis(498));
+    assert!(game.board().iter().flatten().all(Option::is_none));
+    game.advance(Duration::from_millis(1));
+    assert!(game.board().iter().flatten().any(Option::is_some));
+}
+
+#[rstest]
+#[case(Mode::FortyLines, 0)]
+#[case(Mode::Blitz, 1000)]
+fn configured_soft_drop_never_slows_natural_gravity(#[case] mode: Mode, #[case] lines: u32) {
+    let mut game = Game::new(mode, 42);
+    game.lines = lines;
+    let gravity = game.gravity_interval();
+    game.set_soft_drop_interval(Duration::from_secs(1));
+    assert_eq!(game.gravity_interval(), gravity);
+    game.set_soft_drop(true);
+    assert_eq!(game.gravity_interval(), gravity);
+    game.advance(gravity);
+    assert!(game.score() > 0);
+    game.set_soft_drop(false);
+    assert_eq!(game.gravity_interval(), gravity);
+}
+
+#[test]
 fn spawn_collision_ends_game() {
     let mut game = game();
     game.board[HIDDEN - 1] = [Some(Piece::O); WIDTH];

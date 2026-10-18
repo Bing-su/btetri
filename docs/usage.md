@@ -25,27 +25,27 @@ Practice resets the board, hold, and scoring chains; score, lines, elapsed time,
 
 ## Controls
 
-| Key       | During play                      |
-| --------- | -------------------------------- |
-| ← / →     | Move; terminal/OS repeat applies |
-| Z / Ctrl  | Rotate counterclockwise          |
-| ↑ / X     | Rotate clockwise                 |
-| A         | Rotate 180 degrees               |
-| Space     | Hard drop and lock               |
-| ↓         | Soft drop                        |
-| C / Shift | Hold, once per locked piece      |
-| Esc       | Pause / resume                   |
-| ?         | Show help and pause              |
+| Key       | During play                                                 |
+| --------- | ----------------------------------------------------------- |
+| ← / →     | Move; held keys use DAS/ARR when key releases are supported |
+| Z / Ctrl  | Rotate counterclockwise                                     |
+| ↑ / X     | Rotate clockwise                                            |
+| A         | Rotate 180 degrees                                          |
+| Space     | Hard drop and lock                                          |
+| ↓         | Soft drop                                                   |
+| C / Shift | Hold, once per locked piece                                 |
+| Esc       | Pause / resume                                              |
+| ?         | Show help and pause                                         |
 
-| Context         | Controls / behavior                                                                |
-| --------------- | ---------------------------------------------------------------------------------- |
-| Menu            | ↑ / ↓ selects; Enter opens; QUIT exits                                             |
-| Player name     | Enter accepts; Esc cancels; Backspace deletes; Delete clears; limit: 16 characters |
-| Records         | ← / → changes mode; ↑ / ↓ or PgUp / PgDn browses; Esc returns                      |
-| Small terminal  | Below 80 × 28 cells pauses play; resume explicitly after resizing                  |
-| Key releases    | Supported terminals use held soft drop; others move one cell per press/repeat      |
-| Modifier keys   | Standalone Ctrl/Shift require terminal support; Ctrl+C holds by default            |
-| Focus / dialogs | Focus loss, pause, and help clear held soft drop                                   |
+| Context         | Controls / behavior                                                                            |
+| --------------- | ---------------------------------------------------------------------------------------------- |
+| Menu            | ↑ / ↓ selects; Enter opens; QUIT exits                                                         |
+| Player name     | Enter accepts; Esc cancels; Backspace deletes; Delete clears; limit: 16 characters             |
+| Records         | ← / → changes mode; ↑ / ↓ or PgUp / PgDn browses; Esc returns                                  |
+| Small terminal  | Below 80 × 28 cells pauses play; resume explicitly after resizing                              |
+| Key releases    | Supported terminals use configured movement/drop timers; others move one cell per press/repeat |
+| Modifier keys   | Standalone Ctrl/Shift require terminal support; Ctrl+C holds by default                        |
+| Focus / dialogs | Focus loss, pause, and help clear held movement and soft drop                                  |
 
 ## Settings
 
@@ -55,11 +55,20 @@ Open SETTINGS from the menu. Changes remain a draft until saved.
 | ----------------------- | ----------------------------------------------- |
 | Navigation              | ↑ / ↓; Home / End jumps to first / last item    |
 | Mode / ghost / previews | ← / → or Enter changes the value; previews: 1–6 |
+| DAS / ARR / soft drop   | ← / → adjusts by 10 ms; range: 0–1000 ms        |
 | Player                  | Enter opens the name editor                     |
 | Save draft              | F2 outside an editor, or SAVE                   |
 | Discard draft           | Esc outside an editor, or CANCEL                |
 | Reset draft             | RESET DEFAULTS; save to apply                   |
 | Save failure            | Draft remains available; select SAVE to retry   |
+
+| Input timing | Default | Behavior                                                                                                                  |
+| ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------- |
+| DAS          | 150 ms  | First horizontal move is immediate; wait this long before repeating                                                       |
+| ARR          | 30 ms   | Horizontal repeat interval after DAS; 0 moves to the wall                                                                 |
+| SOFT DROP    | 30 ms   | First step is immediate, then repeat at this interval without DAS; 0 drops to the floor, preserving the normal lock delay |
+
+For example, DAS 100 ms and ARR 20 ms move once on press, again at 100 ms, then at 120 ms, 140 ms, and so on. With both directions held, the newest key wins; releasing it restarts DAS for the remaining key. Multiple soft-drop bindings keep dropping until all are released. Held soft drop uses a single timer and awards one point per descended cell; it never falls slower than normal gravity. OS repeat events do not add extra steps when key releases are supported. Terminals without key releases keep OS repeat for both movement and soft drop; these timing settings do not apply there.
 
 | Editor                   | Controls / constraints                                                                             |
 | ------------------------ | -------------------------------------------------------------------------------------------------- |

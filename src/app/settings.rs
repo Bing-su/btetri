@@ -91,6 +91,14 @@ impl Settings {
                     .saturating_add_signed(delta as isize)
                     .clamp(1, 6)
             }
+            "das_ms" | "arr_ms" | "soft_drop_ms" => {
+                let ms = match name {
+                    "das_ms" => &mut self.config.das_ms,
+                    "arr_ms" => &mut self.config.arr_ms,
+                    _ => &mut self.config.soft_drop_ms,
+                };
+                *ms = ms.saturating_add_signed(i64::from(delta) * 10).min(1000);
+            }
             "player" if key == KeyCode::Enter => {
                 self.edit = Some(Edit::Name(self.config.player.clone()))
             }
@@ -268,7 +276,7 @@ mod tests {
     #[test]
     fn duplicate_capture_returns_to_the_list_so_escape_can_cancel() {
         let mut settings = Settings::new(Config::default());
-        settings.selected = 12;
+        settings.selected = 15;
         settings.key(key(KeyCode::Enter));
         settings.key(key(KeyCode::Down));
         settings.key(key(KeyCode::Enter));
@@ -318,10 +326,46 @@ mod tests {
         assert_eq!(settings.config.player, "김");
     }
 
+    #[rstest::rstest]
+    #[case("das_ms")]
+    #[case("arr_ms")]
+    #[case("soft_drop_ms")]
+    fn input_timings_adjust_in_ten_ms_steps_and_clamp(#[case] name: &str) {
+        let mut settings = Settings::new(Config::default());
+        settings.selected = settings
+            .config
+            .entries()
+            .iter()
+            .position(|&(field, _)| field == name)
+            .unwrap();
+        let value = |settings: &Settings| {
+            settings
+                .config
+                .entries()
+                .into_iter()
+                .find(|(field, _)| *field == name)
+                .unwrap()
+                .1
+        };
+        for _ in 0..110 {
+            settings.key(key(KeyCode::Left));
+        }
+        assert_eq!(value(&settings), "0");
+        settings.key(key(KeyCode::Right));
+        assert_eq!(value(&settings), "10");
+        for _ in 0..110 {
+            settings.key(key(KeyCode::Right));
+        }
+        assert_eq!(value(&settings), "1000");
+        assert!(settings.edit.is_none());
+        settings.key(key(KeyCode::F(2)));
+        assert!(matches!(settings.save, SaveState::Pending));
+    }
+
     #[test]
     fn binding_editor_captures_adds_removes_and_cancels_keys() {
         let mut settings = Settings::new(Config::default());
-        settings.selected = 6;
+        settings.selected = 9;
         settings.key(key(KeyCode::Enter));
         settings.key(key(KeyCode::Down));
         settings.key(key(KeyCode::Enter));
@@ -364,7 +408,7 @@ mod tests {
     #[test]
     fn color_changes_apply_only_on_accept() {
         let mut settings = Settings::new(Config::default());
-        settings.selected = 14;
+        settings.selected = 17;
         let original = settings.config.theme.background;
         settings.key(key(KeyCode::Enter));
         settings.key(key(KeyCode::Right));
