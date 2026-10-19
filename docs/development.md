@@ -7,12 +7,17 @@
 | Module            | Responsibility                                                     |
 | ----------------- | ------------------------------------------------------------------ |
 | `game`            | Public deterministic engine; modes, pieces, scoring                |
-| `app`             | Screen transitions, DAS/ARR, held inputs, save/load lifecycle      |
+| `app`             | Screen transitions and save/load lifecycle                         |
+| `app/input`       | Held movement, DAS/ARR timing, and physical-key normalization      |
 | `app/settings`    | Settings draft and typed editors                                   |
 | `ui`              | Ratatui layout, gameplay, settings, and records rendering          |
 | `config`          | Validated settings, key bindings, palette, database path           |
 | `storage`         | SQLite schema, atomic settings writes, idempotent records, ranking |
 | `cli` / `runtime` | Arguments, terminal setup/cleanup, input polling, game clock       |
+
+The engine, application, storage, and shared UI tests live beside their modules in
+`tests.rs`. Public engine items are checked by `deny(missing_docs)`; rustdoc examples
+exercise coordinates, mode navigation, and finished-session behavior.
 
 ## Runtime constraints
 
@@ -33,6 +38,7 @@ cargo test --all-features
 cargo clippy --all-features --all-targets -- -D warnings
 cargo test --no-default-features
 cargo clippy --no-default-features --all-targets -- -D warnings
+cargo doc --all-features --no-deps
 ```
 
 | Tool                  | Coverage                                                          |

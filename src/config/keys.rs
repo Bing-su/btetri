@@ -44,6 +44,7 @@ impl Default for Keys {
 }
 
 impl Keys {
+    /// Serialize action bindings in editor order as comma-separated key labels.
     pub fn entries(&self) -> Vec<(&'static str, String)> {
         [
             ("keys.left", &self.left),
@@ -70,6 +71,9 @@ impl Keys {
         .collect()
     }
 
+    /// Replace one named binding list after parsing every comma-separated key.
+    /// Unknown fields or unrecognized keys fail without changing the list.
+    /// Call `validate` on the complete configuration to reject empty or duplicate bindings.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let keys = value
             .split(',')
@@ -82,6 +86,8 @@ impl Keys {
         Ok(())
     }
 
+    /// Look up a binding list by its persisted name, such as `keys.left`.
+    /// Returns None for unknown fields; callers must validate changes before saving.
     pub fn bindings_mut(&mut self, name: &str) -> Option<&mut Vec<KeyBinding>> {
         match name {
             "keys.left" => Some(&mut self.left),
@@ -111,23 +117,29 @@ impl Keys {
         ]
     }
 
+    /// Resolve a configured gameplay action using normalized key identity.
+    /// Pause and help are screen commands and are handled separately.
     pub fn action(&self, key: KeyEvent) -> Option<Action> {
         self.actions()
             .into_iter()
             .find_map(|(action, bindings)| Self::matches(bindings, key).then_some(action))
     }
 
+    /// Match a terminal event against bindings using the same normalization as capture.
+    /// For example, either physical Ctrl key resolves to the CTRL binding.
     pub fn matches(bindings: &[KeyBinding], key: KeyEvent) -> bool {
         // Capture and gameplay share normalization, e.g. either Ctrl key resolves to CTRL.
         KeyBinding::from_event(key).is_ok_and(|binding| bindings.contains(&binding))
     }
 
+    /// Return the first binding label for compact hints, or an empty label for no bindings.
     pub fn label(bindings: &[KeyBinding]) -> String {
         bindings
             .first()
             .map_or_else(String::new, ToString::to_string)
     }
 
+    /// Require a nonempty list per action and reject duplicate keys across all actions.
     pub(super) fn validate(&self) -> Result<(), String> {
         let mut seen = HashSet::new();
         let groups = self.actions().map(|(_, keys)| keys);
@@ -193,6 +205,8 @@ impl FromStr for KeyBinding {
 }
 
 impl KeyBinding {
+    /// Normalize a terminal key for capture and matching, ignoring Shift and Ctrl flags.
+    /// Rejects Alt combinations and key codes that cannot be represented as a supported binding.
     pub fn from_event(key: KeyEvent) -> Result<Self, String> {
         if key.modifiers.contains(KeyModifiers::ALT) {
             return Err("Use a single key without Alt".into());

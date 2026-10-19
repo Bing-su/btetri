@@ -18,6 +18,7 @@ fn game_areas(area: Rect) -> (Rect, Rect, Rect) {
     )
 }
 
+/// Render the board, sidebars, and the current gameplay dialog inside the given area.
 pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let Some(game) = &app.game else {
         return;

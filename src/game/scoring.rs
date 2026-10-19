@@ -1,29 +1,42 @@
+/// Spin classification used by the scoring rules.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Spin {
+    /// No qualifying rotation-based spin.
     None,
+    /// A mini T-spin or qualifying immobile non-T piece.
     Mini,
+    /// A full T-spin.
     Full,
 }
 
 /// The latest lock's award, excluding soft/hard drop points.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ScoreEvent {
+    /// Spin classification of the locked piece.
     pub spin: Spin,
+    /// Number of rows removed by this lock.
     pub lines: u32,
+    /// Total lock award after level scaling and bonuses, excluding drop points.
     pub points: u64,
     /// Zero on the first consecutive clear; None when no lines were cleared.
     pub combo: Option<u32>,
+    /// Whether this difficult clear received the consecutive difficult-clear multiplier.
     pub back_to_back: bool,
+    /// Whether this line clear left the entire board empty.
     pub perfect_clear: bool,
 }
 
+/// Scoring history needed to carry combos and difficult-clear chains between locks.
 #[derive(Default)]
 pub(super) struct Scoring {
     back_to_back: bool,
+    /// Most recent lock, including empty locks that break combos.
     pub(super) last: Option<ScoreEvent>,
 }
 
 impl Scoring {
+    /// Award one lock and update its chains; empty locks preserve back-to-back but reset combos.
+    /// Perfect-clear points are added before level scaling and never receive the B2B multiplier.
     pub(super) fn award(
         &mut self,
         spin: Spin,

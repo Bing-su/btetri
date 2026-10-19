@@ -57,6 +57,7 @@ impl Default for Theme {
 }
 
 impl Theme {
+    /// Look up a palette entry by its persisted name, such as `theme.background`.
     pub fn color_mut(&mut self, name: &str) -> Option<&mut Color> {
         match name {
             "theme.background" => Some(&mut self.background),
@@ -77,6 +78,7 @@ impl Theme {
         }
     }
 
+    /// Serialize the palette in editor order using round-trippable color labels.
     pub fn entries(&self) -> Vec<(&'static str, String)> {
         [
             ("theme.background", self.background.to_string()),
@@ -97,6 +99,8 @@ impl Theme {
         .into()
     }
 
+    /// Parse and replace a named color; invalid colors or names leave the palette unchanged.
+    /// Accepts color names, RGB hex values such as #64C4EB, and indices from 0 to 255.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         let color = value
             .parse::<Color>()
@@ -108,6 +112,7 @@ impl Theme {
         Ok(())
     }
 
+    /// Resolve a tetromino color from the current palette.
     pub fn piece(&self, piece: Piece) -> Color {
         match piece {
             Piece::I => self.i,

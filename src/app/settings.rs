@@ -1,3 +1,5 @@
+//! An isolated settings draft with name, binding, and color editors.
+
 mod color;
 
 pub use color::{ColorPicker, rgb};
@@ -25,6 +27,7 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// Create an editable draft; the live configuration changes only after a successful save.
     pub fn new(config: Config) -> Self {
         Self {
             config,
@@ -35,6 +38,8 @@ impl Settings {
         }
     }
 
+    /// Edit the draft or request a validated save; return true when the user cancels.
+    /// Key releases are ignored; capture handles Esc and F2 as assignable keys.
     pub fn key(&mut self, key: KeyEvent) -> bool {
         if key.kind == KeyEventKind::Release {
             return false;

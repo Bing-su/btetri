@@ -11,6 +11,7 @@ use super::{centered, footer, format_duration, header, key_hints};
 use crate::app::{App, RecordsState};
 use crate::game::Mode;
 
+/// Render ranked records and loading/failure feedback for the selected mode.
 pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     header(frame, area, "RECORDS", app);
     frame.render_widget(

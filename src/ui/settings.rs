@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Wrap};
 use super::{footer, header, key_hints};
 use crate::app::{App, Edit, SaveState, Settings, rgb};
 
+/// Render the settings draft, current editor, validation errors, and keyboard hints.
 pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let Some(settings) = &app.settings else {
         return;

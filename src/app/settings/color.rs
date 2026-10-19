@@ -8,6 +8,7 @@ pub struct ColorPicker {
 }
 
 impl ColorPicker {
+    /// Open RGB controls for an RGB color, otherwise open the indexed palette.
     pub fn new(value: Color) -> Self {
         Self {
             value,
@@ -16,6 +17,7 @@ impl ColorPicker {
         }
     }
 
+    /// Adjust the draft color with palette/RGB controls; Delete selects terminal default.
     pub fn key(&mut self, key: KeyCode) {
         if key == KeyCode::Delete {
             self.value = Color::Reset;
@@ -71,6 +73,8 @@ impl ColorPicker {
         }
     }
 
+    /// Find the closest xterm palette entry by squared RGB distance.
+    /// Indexed colors retain their exact index, including duplicate RGB entries.
     pub fn index(&self) -> u8 {
         if let Color::Indexed(index) = self.value {
             return index;
@@ -89,6 +93,8 @@ impl ColorPicker {
 }
 
 // Match the xterm palette so switching to RGB preserves colors, e.g. index 196 is red.
+/// Resolve a color using the xterm palette so palette/RGB switching preserves its value.
+/// Terminal default is previewed as white because its actual RGB value is unknown.
 pub fn rgb(color: Color) -> [u8; 3] {
     let index = match color {
         Color::Rgb(r, g, b) => return [r, g, b],

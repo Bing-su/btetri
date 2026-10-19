@@ -1,3 +1,5 @@
+//! Seeded game rules and board state; coordinates start at the top left and increase downward.
+
 mod mode;
 mod piece;
 mod scoring;
@@ -12,29 +14,46 @@ use rand_philox::Philox;
 use scoring::Scoring;
 pub use scoring::{ScoreEvent, Spin};
 
+/// Number of board columns.
 pub const WIDTH: usize = 10;
+/// Total board rows, including the hidden spawn area.
 pub const HEIGHT: usize = 40;
+/// Number of rows above the visible playfield.
 pub const HIDDEN: usize = 20;
+/// Number of rows a frontend normally displays.
 pub const VISIBLE_HEIGHT: usize = HEIGHT - HIDDEN;
 const LOCK_DELAY: Duration = Duration::from_millis(500);
 const BLITZ_LIMIT: Duration = Duration::from_secs(120);
 
+/// One immediate player maneuver; held soft drop is controlled separately by [`Game::set_soft_drop`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
+    /// Move one column left if space permits.
     Left,
+    /// Move one column right if space permits.
     Right,
+    /// Rotate clockwise using the ordered wall-kick tests.
     Clockwise,
+    /// Rotate counterclockwise using the ordered wall-kick tests.
     CounterClockwise,
+    /// Rotate a half turn using the six half-turn kick tests.
     Rotate180,
+    /// Drop to the lowest free row and lock immediately.
     HardDrop,
+    /// Move down one row if free, awarding one drop point.
     SoftDrop,
+    /// Exchange the active and held pieces, once per lock.
     Hold,
 }
 
+/// Whether a session still accepts maneuvers and elapsed time.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Status {
+    /// The session is in progress.
     Playing,
+    /// A blocked spawn or hidden lock ended a competitive session.
     TopOut,
+    /// The line goal or time limit was reached.
     Complete,
 }
 
@@ -44,6 +63,7 @@ enum LastMove {
     Rotation { kick: usize },
 }
 
+/// A complete session whose seeded piece sequence advances only through explicit input and time.
 pub struct Game {
     board: [[Option<Piece>; WIDTH]; HEIGHT],
     active: ActivePiece,
@@ -71,6 +91,8 @@ pub struct Game {
 }
 
 impl Game {
+    /// Start an empty session with a deterministic seven-piece bag sequence.
+    /// Identical seeds, modes, actions, and elapsed durations produce identical game states.
     pub fn new(mode: Mode, seed: u64) -> Self {
         let mut game = Self {
             board: [[None; WIDTH]; HEIGHT],
@@ -101,34 +123,44 @@ impl Game {
         game
     }
 
+    /// Return locked cells indexed by `[row][column]`, including the hidden rows.
+    /// The active piece and ghost are separate so a frontend can render them independently.
     pub fn board(&self) -> &[[Option<Piece>; WIDTH]; HEIGHT] {
         &self.board
     }
 
+    /// Return the current piece in board coordinates; inspect [`Self::status`] before drawing it.
     pub fn active(&self) -> ActivePiece {
         self.active
     }
 
+    /// Return the held piece, or `None` before the first hold or after a practice reset.
     pub fn held(&self) -> Option<Piece> {
         self.held
     }
 
+    /// Iterate upcoming pieces in spawn order without consuming the queue.
     pub fn next(&self) -> impl Iterator<Item = Piece> + '_ {
         self.queue.iter().copied()
     }
 
+    /// Return the ruleset selected at construction.
     pub fn mode(&self) -> Mode {
         self.mode
     }
 
+    /// Return all points earned, including soft and hard drops.
     pub fn score(&self) -> u64 {
         self.score
     }
 
+    /// Return the last lock's award, including a zero-point lock; `None` before any lock.
+    /// Practice resets clear this feedback while retaining the session's total score.
     pub fn last_score(&self) -> Option<ScoreEvent> {
         self.scoring.last
     }
 
+    /// Return cleared lines across this session, including any practice resets.
     pub fn lines(&self) -> u32 {
         self.lines
     }
@@ -138,26 +170,33 @@ impl Game {
         self.pieces
     }
 
+    /// Return the mode's current level derived from the session's cleared lines.
     pub fn level(&self) -> u32 {
         self.mode.level(self.lines)
     }
 
+    /// Return how many practice top-outs have cleared the board; competitive modes return zero.
     pub fn practice_resets(&self) -> u32 {
         self.practice_resets
     }
 
+    /// Return simulated session time, which stops advancing after completion or top-out.
     pub fn elapsed(&self) -> Duration {
         self.elapsed
     }
 
+    /// Return the session state; practice top-outs recover immediately to [`Status::Playing`].
     pub fn status(&self) -> Status {
         self.status
     }
 
+    /// Return whether held soft drop is enabled.
     pub fn soft_drop(&self) -> bool {
         self.soft_drop
     }
 
+    /// Enable or release held soft drop, resetting the gravity timer only when the value changes.
+    /// This updates the setting after a session ends, but does not resume play.
     pub fn set_soft_drop(&mut self, pressed: bool) {
         if self.soft_drop != pressed {
             self.soft_drop = pressed;
@@ -188,10 +227,12 @@ impl Game {
         }
     }
 
+    /// Return Blitz time remaining, saturating at zero; other modes return `None`.
     pub fn remaining(&self) -> Option<Duration> {
         (self.mode == Mode::Blitz).then(|| BLITZ_LIMIT.saturating_sub(self.elapsed))
     }
 
+    /// Return the active piece's lowest collision-free position without moving or locking it.
     pub fn ghost(&self) -> ActivePiece {
         let mut ghost = self.active;
         while self.fits(ActivePiece {
@@ -203,6 +244,8 @@ impl Game {
         ghost
     }
 
+    /// Apply one maneuver immediately; blocked moves and inputs after a session ends are ignored.
+    /// A hard drop can lock, clear lines, and spawn the next piece in the same call.
     pub fn apply(&mut self, action: Action) {
         if self.status != Status::Playing {
             return;
@@ -241,6 +284,20 @@ impl Game {
         self.recover_practice();
     }
 
+    /// Advance gravity and lock delay in steps of at most 10 ms until time is consumed or play ends.
+    /// Unless it tops out first, Blitz stops exactly at two minutes even for a longer duration.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use btetri::game::{Game, Mode, Status};
+    ///
+    /// let mut game = Game::new(Mode::Blitz, 42);
+    /// game.advance(Duration::from_secs(121));
+    /// assert_ne!(game.status(), Status::Playing);
+    /// let elapsed = game.elapsed();
+    /// game.advance(Duration::from_secs(1));
+    /// assert_eq!(game.elapsed(), elapsed);
+    /// ```
     pub fn advance(&mut self, mut duration: Duration) {
         // Small steps preserve gravity/lock ordering after a slow frame, e.g. a resize.
         while !duration.is_zero() && self.status == Status::Playing {

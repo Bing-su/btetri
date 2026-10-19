@@ -1,3 +1,5 @@
+//! Configuration validation and the persisted setting names shared with the editor.
+
 mod keys;
 mod theme;
 
@@ -41,6 +43,8 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Check player, timing, preview, practice-speed, and key-binding constraints.
+    /// Returns the first validation error without changing the configuration.
     pub fn validate(&self) -> Result<(), String> {
         validate_player(&self.player)?;
         if !(10..=1000).contains(&self.practice_speed_percent) {
@@ -58,6 +62,8 @@ impl Config {
         self.keys.validate()
     }
 
+    /// Serialize every setting in editor order using the SQLite setting names.
+    /// The result includes bindings and colors, for example `das_ms` and `theme.i`.
     pub fn entries(&self) -> Vec<(&'static str, String)> {
         let mut entries = vec![
             ("player", self.player.clone()),
@@ -77,6 +83,8 @@ impl Config {
         entries
     }
 
+    /// Parse one named setting, leaving it unchanged on a parsing or range error.
+    /// Use `validate` after loading all entries to check cross-action key conflicts.
     pub fn set(&mut self, name: &str, value: &str) -> Result<(), String> {
         match name {
             "player" => {
@@ -128,6 +136,8 @@ impl Config {
     }
 }
 
+/// Require 1–16 printable characters with at least one non-whitespace character.
+/// Returns an error for empty, control-containing, or overlong names; never trims input.
 pub fn validate_player(player: &str) -> Result<(), String> {
     if player.trim().is_empty()
         || player.chars().count() > 16
@@ -138,6 +148,8 @@ pub fn validate_player(player: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Use an explicit database path or the platform-local btetri data directory.
+/// Returns an error when no data directory is available; does not create the file.
 pub fn database_path(db: Option<PathBuf>) -> miette::Result<PathBuf> {
     db.or_else(|| {
         ProjectDirs::from("", "", "btetri").map(|dirs| dirs.data_local_dir().join("records.db"))

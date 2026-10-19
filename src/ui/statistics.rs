@@ -8,8 +8,10 @@ use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use super::{centered, footer, format_duration, header, key_hints};
 use crate::app::{App, PersonalBest, SaveState};
+use crate::game::Mode;
 use crate::storage::Record;
 
+/// Render session statistics and comparison with the player's previous best.
 pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let Some(game) = &app.game else {
         return;
@@ -66,7 +68,7 @@ fn comparison(current: &Record, best: &PersonalBest) -> Vec<String> {
             return vec![format!("Cannot load previous best: {error}. R retries.")];
         }
         PersonalBest::Loaded(None) => {
-            return vec![if current.mode == "40l" {
+            return vec![if current.mode == Mode::FortyLines {
                 "No previous completed run.".into()
             } else {
                 "No previous record.".into()
@@ -74,7 +76,7 @@ fn comparison(current: &Record, best: &PersonalBest) -> Vec<String> {
         }
         PersonalBest::Loaded(Some(best)) => best,
     };
-    if current.mode == "40l" {
+    if current.mode == Mode::FortyLines {
         let previous = Duration::from_millis(u64::try_from(best.elapsed_ms).unwrap_or_default());
         let mut lines = vec![format!("Previous best  {}", format_duration(previous))];
         if current.outcome != "complete" {

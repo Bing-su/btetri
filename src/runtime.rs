@@ -1,3 +1,5 @@
+//! Terminal setup, cleanup, and the clock that drives application input and rendering.
+
 use std::io::{self, IsTerminal};
 use std::time::{Duration, Instant};
 
@@ -19,6 +21,9 @@ use crate::config::database_path;
 use crate::storage::Store;
 use crate::ui;
 
+/// Parse CLI options and run the terminal game with SQLite persistence.
+/// Reports terminal, configuration, and storage failures, including unsaved results.
+/// Scope guards restore terminal state on return and panic unwinding.
 pub fn run() -> miette::Result<()> {
     let options = Options::parse();
     if let Some(Command::Records(records)) = &options.command
