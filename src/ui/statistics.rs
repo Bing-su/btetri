@@ -162,7 +162,7 @@ mod tests {
         let summary = [
             format!("SCORE {:06}", game.score()),
             format!("LINES {}", game.lines()),
-            format!("TIME {}", format_duration(game.elapsed())),
+            format!("TIME  {}", format_duration(game.elapsed())),
         ];
         let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
         app.screen = Screen::GameOver;

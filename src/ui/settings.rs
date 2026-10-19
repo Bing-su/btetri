@@ -42,9 +42,12 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
             .style(Style::default().fg(app.config.theme.muted)),
         Rect::new(area.x, area.y + 3, area.width, 2),
     );
-    setting_rows(frame, area, settings, &entries, app);
+    // Hide background rows in modal editors so long values, e.g. key names, cannot peek out.
+    if settings.edit.is_none() || matches!(settings.edit, Some(Edit::Name(_))) {
+        setting_rows(frame, area, settings, &entries, app);
+    }
     if let Some(edit) = &settings.edit {
-        editor(frame, area, edit, app);
+        editor(frame, area, edit, field, app);
     }
     let error = settings.error.as_ref().or(match &settings.save {
         SaveState::Failed(error) => Some(error),
@@ -155,18 +158,25 @@ fn setting_rows(
     );
 }
 
-fn editor(frame: &mut Frame<'_>, area: Rect, edit: &Edit, app: &App) {
+fn editor(frame: &mut Frame<'_>, area: Rect, edit: &Edit, field: &str, app: &App) {
     if matches!(edit, Edit::Name(_)) {
         return;
     }
+    // Keep the edited target visible when the list is hidden, e.g. COUNTER CLOCKWISE.
+    let target = field
+        .rsplit('.')
+        .next()
+        .unwrap_or(field)
+        .replace('_', " ")
+        .to_uppercase();
     let panel = Rect::new(area.x + 4, area.y + 5, area.width - 8, area.height - 8);
     frame.render_widget(Clear, panel);
     frame.render_widget(
         Block::bordered()
             .style(Style::default().bg(app.config.theme.background))
             .title_top(match edit {
-                Edit::Keys { .. } => " KEY BINDINGS ",
-                _ => " COLOR PICKER ",
+                Edit::Keys { .. } => format!(" KEY BINDINGS — {target} "),
+                _ => format!(" COLOR PICKER — {target} "),
             }),
         panel,
     );
@@ -251,6 +261,7 @@ fn contrast([r, g, b]: [u8; 3]) -> Color {
 }
 
 fn palette(frame: &mut Frame<'_>, panel: Rect, value: Color, selected_index: u8) {
+    let x = panel.x + (panel.width - 64) / 2;
     for index in 0..=255_u8 {
         let selected = value != Color::Reset && selected_index == index;
         let color = Color::Indexed(index);
@@ -258,7 +269,7 @@ fn palette(frame: &mut Frame<'_>, panel: Rect, value: Color, selected_index: u8)
             Paragraph::new(if selected { "[]" } else { "  " })
                 .style(Style::default().bg(color).fg(contrast(rgb(color)))),
             Rect::new(
-                panel.x + 3 + u16::from(index % 32) * 2,
+                x + u16::from(index % 32) * 2,
                 panel.y + 3 + u16::from(index / 32),
                 2,
                 1,
@@ -281,7 +292,7 @@ fn sliders(frame: &mut Frame<'_>, panel: Rect, [r, g, b]: [u8; 3], selected: usi
                 .gauge_style(Style::default().fg(color))
                 .ratio(f64::from(value) / 255.0)
                 .label(format!(
-                    "{} {name} {value:03}",
+                    "{} {name:<5} {value:03}",
                     if selected == index { ">" } else { " " }
                 )),
             Rect::new(
@@ -306,6 +317,32 @@ mod tests {
     use super::*;
     use crate::app::{Screen, Settings};
     use crate::config::Config;
+    use crate::ui::tests::position_of;
+
+    #[rstest::rstest]
+    fn color_controls_share_columns_and_palette_is_centered(
+        #[values((80, 28), (81, 29), (100, 40))] size: (u16, u16),
+    ) {
+        let panel = Rect::new(4, 5, size.0 - 8, size.1 - 8);
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal
+            .draw(|frame| sliders(frame, panel, [16, 17, 22], 0))
+            .unwrap();
+        let buffer = terminal.backend().buffer();
+        let red = position_of(buffer, "RED").0;
+        for name in ["GREEN", "BLUE"] {
+            assert_eq!(position_of(buffer, name).0, red);
+        }
+        let value = position_of(buffer, "016").0;
+        for text in ["017", "022"] {
+            assert_eq!(position_of(buffer, text).0, value);
+        }
+        terminal
+            .draw(|frame| palette(frame, panel, Color::Indexed(0), 0))
+            .unwrap();
+        let (x, _) = position_of(terminal.backend().buffer(), "[]");
+        assert!((x - panel.x).abs_diff(panel.right() - (x + 64)) <= 1);
+    }
 
     #[rstest::rstest]
     #[case("das_ms", "DAS", "150 ms", "Delay before horizontal repeat")]
@@ -390,15 +427,30 @@ mod tests {
             .map(|cell| cell.symbol())
             .collect();
         for label in [
-            "COLOR PICKER",
+            "COLOR PICKER — BACKGROUND",
             "PREVIEW",
             "cancel edit",
             if palette_mode { "PALETTE" } else { "RED" },
         ] {
             assert!(text.contains(label), "missing {label}");
         }
+        let buffer = terminal.backend().buffer();
+        let shell = super::super::centered(
+            Rect::new(0, 0, width, height),
+            width.min(94),
+            height.min(30),
+        );
+        for y in shell.y + 5..shell.bottom() - 3 {
+            for x in (shell.x..shell.x + 4).chain(shell.right() - 4..shell.right()) {
+                assert_eq!(
+                    buffer[(x, y)].symbol(),
+                    " ",
+                    "background text beside editor at {x},{y}"
+                );
+            }
+        }
         app.key(key(crossterm::event::KeyCode::Esc)).unwrap();
-        app.settings.as_mut().unwrap().selected = 8;
+        app.settings.as_mut().unwrap().selected = 11;
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
         terminal
@@ -411,7 +463,7 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect();
-        assert!(text.contains("KEY BINDINGS"));
+        assert!(text.contains("KEY BINDINGS — COUNTER CLOCKWISE"));
         assert!(text.contains("PRESS A KEY"));
         assert!(text.contains("including Esc / F2"));
     }

@@ -341,13 +341,24 @@ fn result_dialog(frame: &mut Frame<'_>, area: Rect, game: &Game, app: &App) {
             "GAME OVER"
         }),
         Line::from(""),
-        Line::from(format!("SCORE {:06}", game.score())),
-        Line::from(format!("LINES {}", game.lines())),
-        Line::from(format!("TIME {}", format_duration(game.elapsed()))),
+    ];
+    // Use the widest summary so long runs, e.g. 1000:00.000, keep labels in one column.
+    let summary = [
+        format!("SCORE {:06}", game.score()),
+        format!("LINES {}", game.lines()),
+        format!("TIME  {}", format_duration(game.elapsed())),
+    ];
+    let width = summary.iter().map(String::len).max().unwrap_or_default();
+    lines.extend(
+        summary
+            .into_iter()
+            .map(|text| Line::from(format!("{text:<width$}"))),
+    );
+    lines.extend([
         Line::from(""),
         Line::from(save).style(Style::default().fg(app.config.theme.muted)),
         Line::from(""),
-    ];
+    ]);
     for (index, label) in ["PLAY AGAIN", "STATISTICS", "RECORDS", "MAIN MENU"]
         .into_iter()
         .enumerate()

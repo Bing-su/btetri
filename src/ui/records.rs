@@ -45,6 +45,14 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn records_table(frame: &mut Frame<'_>, area: Rect, app: &App) {
+    // Align headings with their values, e.g. SCORE ends at the score's units column.
+    let aligned_cell = |column, value: String| {
+        Cell::from(Text::from(value).alignment(if column == 1 {
+            Alignment::Left
+        } else {
+            Alignment::Right
+        }))
+    };
     let table_area = Rect::new(
         area.x,
         area.y + 7,
@@ -66,13 +74,7 @@ fn records_table(frame: &mut Frame<'_>, area: Rect, app: &App) {
             ]
             .into_iter()
             .enumerate()
-            .map(|(column, value)| {
-                Cell::from(Text::from(value).alignment(if column == 1 {
-                    Alignment::Left
-                } else {
-                    Alignment::Right
-                }))
-            }),
+            .map(|(column, value)| aligned_cell(column, value)),
         )
         .height(2)
     });
@@ -88,9 +90,14 @@ fn records_table(frame: &mut Frame<'_>, area: Rect, app: &App) {
     let table = Table::new(rows, columns)
         .column_spacing(2)
         .header(
-            Row::new(["#", "PLAYER", "SCORE", "LV", "LINES", "TIME", "DATE"])
-                .style(Style::default().fg(app.config.theme.muted))
-                .bottom_margin(1),
+            Row::new(
+                ["#", "PLAYER", "SCORE", "LV", "LINES", "TIME", "DATE"]
+                    .into_iter()
+                    .enumerate()
+                    .map(|(column, value)| aligned_cell(column, value.to_owned())),
+            )
+            .style(Style::default().fg(app.config.theme.muted))
+            .bottom_margin(1),
         )
         .block(
             Block::default()

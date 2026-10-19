@@ -6,10 +6,10 @@ mod statistics;
 use std::time::Duration;
 
 use ratatui::Frame;
-use ratatui::layout::{Alignment, Rect};
+use ratatui::layout::{Constraint, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table, Wrap};
 
 use crate::app::{App, MenuItem, Screen};
 use crate::config::Keys;
@@ -191,11 +191,11 @@ fn menu(frame: &mut Frame<'_>, area: Rect, app: &App) {
     .enumerate()
     {
         frame.render_widget(
-            Paragraph::new(focused(item.label(), app.menu_selection == item, app)),
+            Paragraph::new(focused(item.label(), app.menu_selection == item, app)).centered(),
             Rect::new(
-                form.x + 12,
+                form.x,
                 form.y + 6 + u16::try_from(index).unwrap_or_default() * 2,
-                20,
+                form.width,
                 1,
             ),
         );
@@ -216,44 +216,81 @@ fn menu(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn help(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let area = centered(area, 54, 20);
+    let area = centered(area, 74, 20);
     frame.render_widget(Clear, area);
     let keys = &app.config.keys;
-    let mut lines = vec![
-        Line::from("CONTROLS — PAUSED"),
-        Line::from(""),
-        Line::from(format!(
-            "{} / {}    Move left / right",
-            Keys::label(&keys.left),
-            Keys::label(&keys.right)
-        )),
-        Line::from(format!(
-            "{} / {}    Rotate counterclockwise / clockwise",
-            Keys::label(&keys.counter_clockwise),
-            Keys::label(&keys.clockwise)
-        )),
-        Line::from(format!("{}    Hard drop", Keys::label(&keys.hard_drop))),
-        Line::from(format!("{}    Rotate 180", Keys::label(&keys.rotate_180))),
-        Line::from(format!(
-            "{}    Soft drop (hold; legacy: repeat)",
-            Keys::label(&keys.soft_drop)
-        )),
-        Line::from(format!("{}    Hold", Keys::label(&keys.hold))),
-        Line::from(format!("{}    Pause", Keys::label(&keys.pause))),
-        Line::from(""),
+    let controls = [
+        (
+            format!("{} / {}", Keys::label(&keys.left), Keys::label(&keys.right)),
+            "Move left / right",
+        ),
+        (
+            format!(
+                "{} / {}",
+                Keys::label(&keys.counter_clockwise),
+                Keys::label(&keys.clockwise)
+            ),
+            "Rotate counterclockwise / clockwise",
+        ),
+        (Keys::label(&keys.hard_drop), "Hard drop"),
+        (Keys::label(&keys.rotate_180), "Rotate 180"),
+        (
+            Keys::label(&keys.soft_drop),
+            "Soft drop (hold; legacy: repeat)",
+        ),
+        (Keys::label(&keys.hold), "Hold"),
+        (Keys::label(&keys.pause), "Pause"),
+    ];
+    let key_width = controls
+        .iter()
+        .map(|(key, _)| Line::from(key.as_str()).width())
+        .max()
+        .unwrap_or_default();
+    let action_width = controls
+        .iter()
+        .map(|(_, action)| action.len())
+        .max()
+        .unwrap_or_default();
+    let key_width = u16::try_from(key_width).unwrap_or_default();
+    let width = key_width + 4 + u16::try_from(action_width).unwrap_or_default();
+    frame.render_widget(
+        Block::bordered().style(Style::default().bg(app.config.theme.background)),
+        area,
+    );
+    frame.render_widget(
+        Paragraph::new("CONTROLS — PAUSED").centered(),
+        Rect::new(area.x + 1, area.y + 1, area.width - 2, 1),
+    );
+    // Keep descriptions in one column even for bindings such as LEFT / RIGHT and SPACE.
+    let table_area = centered(
+        Rect::new(area.x + 1, area.y + 3, area.width - 2, 7),
+        width,
+        7,
+    );
+    frame.render_widget(
+        Table::new(
+            controls.into_iter().map(|(key, action)| {
+                Row::new([
+                    Cell::from(Line::from(key).right_aligned()),
+                    Cell::from(action),
+                ])
+            }),
+            [Constraint::Length(key_width), Constraint::Min(0)],
+        )
+        .column_spacing(4),
+        table_area,
+    );
+    let lines = vec![
         Line::from("40 LINES: clear 40 lines at fixed gravity"),
         Line::from("BLITZ: score within 2 minutes; gravity increases"),
         Line::from("MARATHON: survive; level up every 10 lines (max 20)"),
         Line::from("PRACTICE: unlimited; clear board on topout"),
         Line::from(""),
+        key_hints(&[("Esc", "close")], app),
     ];
-    lines.push(key_hints(&[("Esc", "close")], app));
     frame.render_widget(
-        Paragraph::new(lines)
-            .alignment(Alignment::Center)
-            .block(Block::bordered())
-            .style(Style::default().bg(app.config.theme.background)),
-        area,
+        Paragraph::new(lines).centered(),
+        Rect::new(area.x + 1, area.y + 11, area.width - 2, 6),
     );
 }
 
@@ -291,13 +328,136 @@ mod tests {
             .collect()
     }
 
-    fn position_of(buffer: &Buffer, text: &str) -> (u16, u16) {
+    pub(super) fn position_of(buffer: &Buffer, text: &str) -> (u16, u16) {
         let index = buffer
             .content
             .windows(text.chars().count())
             .position(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == text)
             .unwrap();
         buffer.pos_of(index)
+    }
+
+    #[rstest::rstest]
+    fn menu_choices_are_centered_and_share_a_column(
+        #[values((80, 28), (81, 29), (100, 40))] size: (u16, u16),
+    ) {
+        let app = App::try_from(Config::default()).unwrap();
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let x = position_of(buffer, "START GAME").0;
+        for label in ["RECORDS", "SETTINGS", "QUIT"] {
+            assert_eq!(position_of(buffer, label).0, x);
+        }
+        let width = u16::try_from(focused("START GAME", true, &app).width()).unwrap();
+        assert!((x - 2).abs_diff(size.0 - (x - 2 + width)) <= 1);
+    }
+
+    #[rstest::rstest]
+    fn help_controls_share_key_and_description_columns(
+        #[values((80, 28), (100, 40))] size: (u16, u16),
+        #[values(false, true)] wide_keys: bool,
+    ) {
+        let mut app = App::try_from(Config::default()).unwrap();
+        if wide_keys {
+            app.config.keys.left = vec!["pageup".parse().unwrap()];
+            app.config.keys.right = vec!["pagedown".parse().unwrap()];
+        }
+        app.start();
+        app.screen = Screen::Help(HelpReturn::Playing);
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let x = position_of(buffer, "Move left / right").0;
+        for description in [
+            "Rotate counterclockwise / clockwise",
+            "Hard drop",
+            "Rotate 180",
+            "Soft drop (hold; legacy: repeat)",
+            "Hold",
+            "Pause",
+        ] {
+            assert_eq!(position_of(buffer, description).0, x);
+        }
+        for key in ["SPACE", "DOWN", "ESC"] {
+            let (key_x, _) = position_of(buffer, key);
+            assert_eq!(key_x + u16::try_from(key.len()).unwrap() + 4, x);
+        }
+    }
+
+    #[rstest::rstest]
+    fn result_summary_labels_and_values_share_columns(
+        #[values((80, 28), (100, 40))] size: (u16, u16),
+        #[values(0, 60_000)] elapsed_seconds: u64,
+    ) {
+        let mut app = App::try_from(Config {
+            mode: Mode::Practice,
+            ..Config::default()
+        })
+        .unwrap();
+        app.start();
+        app.game
+            .as_mut()
+            .unwrap()
+            .advance(Duration::from_secs(elapsed_seconds));
+        app.screen = Screen::GameOver;
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let x = position_of(buffer, "SCORE 000000").0;
+        for text in [
+            "LINES 0".to_owned(),
+            format!(
+                "TIME  {}",
+                format_duration(Duration::from_secs(elapsed_seconds))
+            ),
+        ] {
+            assert_eq!(position_of(buffer, &text).0, x);
+        }
+        assert_eq!(
+            buffer[(x + 6, position_of(buffer, "LINES 0").1)].symbol(),
+            "0"
+        );
+    }
+
+    #[rstest::rstest]
+    fn record_headings_align_with_values(#[values((80, 28), (100, 40))] size: (u16, u16)) {
+        let mut app = App::try_from(Config {
+            mode: Mode::Blitz,
+            ..Config::default()
+        })
+        .unwrap();
+        app.start();
+        let mut record =
+            crate::storage::Record::from_game(app.game.as_ref().unwrap(), "Alice").unwrap();
+        record.score = 123456;
+        record.level = 7;
+        record.lines = 123;
+        record.elapsed_ms = 12345;
+        app.open_records(Mode::Blitz);
+        app.records = crate::app::RecordsState::Loaded(vec![record]);
+        let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+        terminal.draw(|frame| draw(frame, &app)).unwrap();
+        let buffer = terminal.backend().buffer();
+        assert_eq!(
+            position_of(buffer, "PLAYER").0,
+            position_of(buffer, "Alice").0
+        );
+        for (heading, value) in [
+            ("#", "1"),
+            ("SCORE", "123456"),
+            ("LV", "07"),
+            ("LINES", "123"),
+            ("TIME", "00:12.345"),
+        ] {
+            let (x, y) = position_of(buffer, heading);
+            let start =
+                x + u16::try_from(heading.len()).unwrap() - u16::try_from(value.len()).unwrap();
+            let rendered: String = (0..u16::try_from(value.len()).unwrap())
+                .map(|offset| buffer[(start + offset, y + 2)].symbol())
+                .collect();
+            assert_eq!(rendered, value, "{heading} is misaligned");
+        }
     }
 
     #[rstest::rstest]
