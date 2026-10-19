@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-26.04-arm
+            target: aarch64-unknown-linux-musl
+          - os: ubuntu-24.04-riscv
+            target: riscv64-unknown-linux-musl
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+
+    permissions:
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Install musl tools
+        if: ${{ contains(matrix.os, 'ubuntu') }}
+        run: sudo apt install -y musl-tools
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Build binary
+        run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Archive binary
+        run: 7z a ${{ github.workspace }}/btetri-${{ matrix.target }}.zip btetri${{ case(runner.os == 'Windows', '.exe', '') }}
+        working-directory: target/${{ matrix.target }}/release
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: btetri-*.zip
+
+      - uses: actions/upload-artifact@v7
+        with:
+          archive: false
+          path: btetri-${{ matrix.target }}.zip
+          if-no-files-found: error
+
+      - uses: orhun/git-cliff-action@v4
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        id: cliff
+        with:
+          args: -vv --latest --strip header
+
+      - name: Publish artifacts and release
+        if: ${{ startsWith(github.ref, 'refs/tags/') }}
+        uses: softprops/action-gh-release@v3
+        with:
+          files: btetri-*.zip
+          body: ${{ steps.cliff.outputs.content }}
