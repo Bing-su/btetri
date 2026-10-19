@@ -47,6 +47,42 @@ fn untimed_modes_keep_fixed_gravity(#[case] mode: Mode) {
 }
 
 #[rstest]
+#[case(0, 10)]
+#[case(10, 10)]
+#[case(50, 50)]
+#[case(100, 100)]
+#[case(200, 200)]
+#[case(1000, 1000)]
+#[case(u16::MAX, 1000)]
+fn practice_speed_scales_gravity_and_clamps(#[case] percent: u16, #[case] effective: u16) {
+    let mut game = Game::new(Mode::Practice, 42);
+    game.set_practice_speed_percent(percent);
+    let interval = Duration::from_secs_f64((1.0 / (60.0 * 0.02)) * (100.0 / f64::from(effective)));
+    assert_eq!(game.gravity_interval(), interval);
+    let y = game.active().y;
+    game.advance(interval.saturating_sub(Duration::from_nanos(1)));
+    assert_eq!(game.active().y, y);
+    game.advance(Duration::from_nanos(1));
+    assert_eq!(game.active().y, y + 1);
+    game.set_soft_drop_interval(Duration::from_secs(10));
+    game.set_soft_drop(true);
+    assert_eq!(game.gravity_interval(), interval);
+}
+
+#[test]
+fn changing_practice_speed_restarts_the_timer_only_when_changed() {
+    let mut game = Game::new(Mode::Practice, 42);
+    game.advance(Duration::from_millis(800));
+    let y = game.active().y;
+    game.set_practice_speed_percent(200);
+    game.advance(Duration::from_millis(400));
+    assert_eq!(game.active().y, y);
+    game.set_practice_speed_percent(200);
+    game.advance(Duration::from_millis(17));
+    assert_eq!(game.active().y, y + 1);
+}
+
+#[rstest]
 #[case(Mode::FortyLines, Spin::Mini)]
 #[case(Mode::Practice, Spin::Mini)]
 #[case(Mode::Blitz, Spin::None)]
@@ -82,6 +118,8 @@ fn practice_recovers_from_topout_without_losing_session_totals(
     #[case] timed: bool,
 ) {
     let mut game = Game::new(Mode::Practice, 42);
+    game.set_practice_speed_percent(200);
+    let gravity = game.gravity_interval();
     game.score = 123;
     game.lines = 42;
     game.pieces = 7;
@@ -108,6 +146,7 @@ fn practice_recovers_from_topout_without_losing_session_totals(
     };
     assert_eq!(game.status(), Status::Playing);
     assert_eq!(game.practice_resets(), 1);
+    assert_eq!(game.gravity_interval(), gravity);
     assert!(game.board().iter().flatten().all(Option::is_none));
     assert_eq!(game.lines(), 42);
     assert_eq!(game.pieces(), if action == Action::Hold { 7 } else { 8 });

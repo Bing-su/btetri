@@ -321,6 +321,7 @@ mod tests {
             ("das_ms", "120"),
             ("arr_ms", "0"),
             ("soft_drop_ms", "10"),
+            ("practice_speed_percent", "200"),
             ("keys.left", "j, ß, COMMA, F2, DELETE"),
             ("theme.i", "red"),
             ("theme.o", "reset"),

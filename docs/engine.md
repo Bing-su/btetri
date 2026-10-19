@@ -20,20 +20,21 @@ game.apply(Action::HardDrop);
 println!("Score: {}", game.score());
 ```
 
-| Interface                                          | Contract                                                                                                            |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `Game::new(mode, seed)`                            | Infallible; the same seed, inputs, and elapsed time produce the same state                                          |
-| `str::parse::<Mode>()`                             | Accepts `40l`, `blitz`, or `practice`; otherwise returns `InvalidMode`                                              |
-| `Game::apply(action)`                              | Apply one input; `Action::SoftDrop` moves one cell                                                                  |
-| `Game::advance(duration)`                          | Advance caller-supplied time without I/O                                                                            |
-| `Game::set_soft_drop(pressed)`                     | Set held soft-drop state                                                                                            |
-| `Game::set_soft_drop_interval(duration)`           | Override held soft-drop interval; zero reaches the floor on the next tick; never slower than gravity                |
-| `Game::board()` / `active()` / `next()` / `held()` | Read board, active piece, previews, and hold                                                                        |
-| `Game::score()` / `last_score()` / `status()`      | Read score, latest lock award, and outcome                                                                          |
-| `Game::remaining()`                                | Remaining BLITZ time; `None` for untimed modes                                                                      |
-| `Game::practice_resets()`                          | Automatic resets during the practice session                                                                        |
-| `Game::pieces()`                                   | Locked pieces in the session; includes the final lock, survives practice resets, and excludes holds/unplaced pieces |
-| `cli` feature (default)                            | Builds the terminal game; disable to omit terminal, SQLite, and miette dependencies                                 |
+| Interface                                          | Contract                                                                                                                                                   |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Game::new(mode, seed)`                            | Infallible; the same seed, inputs, and elapsed time produce the same state                                                                                 |
+| `str::parse::<Mode>()`                             | Accepts `40l`, `blitz`, or `practice`; otherwise returns `InvalidMode`                                                                                     |
+| `Game::apply(action)`                              | Apply one input; `Action::SoftDrop` moves one cell                                                                                                         |
+| `Game::advance(duration)`                          | Advance caller-supplied time without I/O                                                                                                                   |
+| `Game::set_soft_drop(pressed)`                     | Set held soft-drop state                                                                                                                                   |
+| `Game::set_soft_drop_interval(duration)`           | Override held soft-drop interval; zero reaches the floor on the next tick; never slower than gravity                                                       |
+| `Game::set_practice_speed_percent(percent)`        | Scale Practice gravity; default 100; clamp to 10–1000%; e.g. 200 = twice as fast; ignored in other modes; a changed value restarts the Practice drop timer |
+| `Game::board()` / `active()` / `next()` / `held()` | Read board, active piece, previews, and hold                                                                                                               |
+| `Game::score()` / `last_score()` / `status()`      | Read score, latest lock award, and outcome                                                                                                                 |
+| `Game::remaining()`                                | Remaining BLITZ time; `None` for untimed modes                                                                                                             |
+| `Game::practice_resets()`                          | Automatic resets during the practice session                                                                                                               |
+| `Game::pieces()`                                   | Locked pieces in the session; includes the final lock, survives practice resets, and excludes holds/unplaced pieces                                        |
+| `cli` feature (default)                            | Builds the terminal game; disable to omit terminal, SQLite, and miette dependencies                                                                        |
 
 By default, the library's `set_soft_drop` uses 20× gravity. For example, `set_soft_drop_interval(Duration::from_millis(30))` selects a 30 ms interval while held; changing it restarts the drop timer. The CLI uses this override for its [soft-drop setting](usage.md#settings) and schedules horizontal actions with DAS/ARR.
 
@@ -53,7 +54,8 @@ By default, the library's `set_soft_drop` uses 20× gravity. For example, `set_s
 | 180° rotation     | TETR.IO kicks                                                                                                                                        |
 | BLITZ progression | Start at level 1; each level needs `ceil(2.1 × level)` more lines: cumulative 3, 8, 15, …                                                            |
 | BLITZ gravity     | `(0.65 − 0.007 × (level − 1))^(level − 1)` seconds per row; capped at 20G                                                                            |
-| Other modes       | Level 1 and fixed 0.02G                                                                                                                              |
+| 40 LINES          | Level 1 and fixed 0.02G                                                                                                                              |
+| PRACTICE          | Level 1; 0.02G × speed percent / 100; default 100%; retained after automatic board resets                                                            |
 
 ## Scoring
 

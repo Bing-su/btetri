@@ -18,6 +18,7 @@ pub struct Config {
     pub das_ms: u64,
     pub arr_ms: u64,
     pub soft_drop_ms: u64,
+    pub practice_speed_percent: u16,
     pub keys: Keys,
     pub theme: Theme,
 }
@@ -32,6 +33,7 @@ impl Default for Config {
             das_ms: 150,
             arr_ms: 30,
             soft_drop_ms: 30,
+            practice_speed_percent: 100,
             keys: Keys::default(),
             theme: Theme::default(),
         }
@@ -41,6 +43,9 @@ impl Default for Config {
 impl Config {
     pub fn validate(&self) -> Result<(), String> {
         validate_player(&self.player)?;
+        if !(10..=1000).contains(&self.practice_speed_percent) {
+            return Err("practice_speed_percent must be between 10 and 1000".into());
+        }
         if !(1..=6).contains(&self.next_queue_length) {
             return Err("next_queue_length must be between 1 and 6".into());
         }
@@ -62,6 +67,10 @@ impl Config {
             ("das_ms", self.das_ms.to_string()),
             ("arr_ms", self.arr_ms.to_string()),
             ("soft_drop_ms", self.soft_drop_ms.to_string()),
+            (
+                "practice_speed_percent",
+                self.practice_speed_percent.to_string(),
+            ),
         ];
         entries.extend(self.keys.entries());
         entries.extend(self.theme.entries());
@@ -101,6 +110,15 @@ impl Config {
                     "arr_ms" => self.arr_ms = ms,
                     _ => self.soft_drop_ms = ms,
                 }
+            }
+            "practice_speed_percent" => {
+                let percent = value
+                    .parse::<u16>()
+                    .map_err(|error| format!("{error}; use a number from 10 to 1000"))?;
+                if !(10..=1000).contains(&percent) {
+                    return Err("use a number from 10 to 1000".into());
+                }
+                self.practice_speed_percent = percent;
             }
             name if name.starts_with("keys.") => self.keys.set(name, value)?,
             name if name.starts_with("theme.") => self.theme.set(name, value)?,
@@ -146,6 +164,10 @@ mod tests {
     #[case("das_ms", "1001")]
     #[case("arr_ms", "-1")]
     #[case("soft_drop_ms", "oops")]
+    #[case("practice_speed_percent", "0")]
+    #[case("practice_speed_percent", "9")]
+    #[case("practice_speed_percent", "1001")]
+    #[case("practice_speed_percent", "oops")]
     #[case("keys.left", "ctrl+a")]
     #[case("theme.i", "oops")]
     #[case("unknown", "true")]
@@ -174,6 +196,18 @@ mod tests {
         .unwrap_err();
     }
 
+    #[rstest::rstest]
+    #[case(9)]
+    #[case(1001)]
+    fn invalid_practice_speed_is_rejected(#[case] practice_speed_percent: u16) {
+        Config {
+            practice_speed_percent,
+            ..Config::default()
+        }
+        .validate()
+        .unwrap_err();
+    }
+
     proptest! {
         #[test]
         fn settings_entries_restore_changed_values(
@@ -184,6 +218,7 @@ mod tests {
             das_ms in 0_u64..=1000,
             arr_ms in 0_u64..=1000,
             soft_drop_ms in 0_u64..=1000,
+            practice_speed_percent in 10_u16..=1000,
             function_key in 1_u8..=24,
             rgb in any::<[u8; 3]>(),
             palette in any::<u8>(),
@@ -196,6 +231,7 @@ mod tests {
                 das_ms,
                 arr_ms,
                 soft_drop_ms,
+                practice_speed_percent,
                 ..Config::default()
             };
             config.set("keys.left", &format!("F{function_key}")).unwrap();

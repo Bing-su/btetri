@@ -197,7 +197,9 @@ impl App {
     pub fn start(&mut self) {
         self.clear_held_keys();
         self.pressed_actions.clear();
-        self.game = Some(Game::new(self.config.mode, rand::random()));
+        let mut game = Game::new(self.config.mode, rand::random());
+        game.set_practice_speed_percent(self.config.practice_speed_percent);
+        self.game = Some(game);
         self.record = None;
         self.personal_best = PersonalBest::Loaded(None);
         self.save = SaveState::None;
@@ -745,6 +747,25 @@ fn repeat_action(game: &mut Game, action: Action, instant: bool) {
 mod tests {
     use super::*;
 
+    #[rstest::rstest]
+    #[case(Mode::Practice, 1)]
+    #[case(Mode::FortyLines, 0)]
+    #[case(Mode::Blitz, 0)]
+    fn starts_and_restarts_apply_speed_only_to_practice(#[case] mode: Mode, #[case] rows: i32) {
+        let mut app = App::try_from(Config {
+            mode,
+            practice_speed_percent: 200,
+            ..Config::default()
+        })
+        .unwrap();
+        for _ in 0..2 {
+            app.start();
+            let y = app.game.as_ref().unwrap().active().y;
+            app.advance(Duration::from_millis(500)).unwrap();
+            assert_eq!(app.game.as_ref().unwrap().active().y, y + rows);
+        }
+    }
+
     fn release(app: &mut App, code: KeyCode) {
         app.key(KeyEvent::new_with_kind(
             code,
@@ -1035,7 +1056,7 @@ mod tests {
             KeyEventKind::Release,
         ))
         .unwrap();
-        app.settings.as_mut().unwrap().selected = 7;
+        app.settings.as_mut().unwrap().selected = 8;
         app.key(key(KeyCode::Enter)).unwrap();
         app.key(KeyEvent::new_with_kind(
             KeyCode::Enter,

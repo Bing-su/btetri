@@ -99,6 +99,13 @@ impl Settings {
                 };
                 *ms = ms.saturating_add_signed(i64::from(delta) * 10).min(1000);
             }
+            "practice_speed_percent" => {
+                self.config.practice_speed_percent = self
+                    .config
+                    .practice_speed_percent
+                    .saturating_add_signed(delta as i16 * 10)
+                    .clamp(10, 1000);
+            }
             "player" if key == KeyCode::Enter => {
                 self.edit = Some(Edit::Name(self.config.player.clone()))
             }
@@ -276,7 +283,7 @@ mod tests {
     #[test]
     fn duplicate_capture_returns_to_the_list_so_escape_can_cancel() {
         let mut settings = Settings::new(Config::default());
-        settings.selected = 15;
+        settings.selected = 16;
         settings.key(key(KeyCode::Enter));
         settings.key(key(KeyCode::Down));
         settings.key(key(KeyCode::Enter));
@@ -330,7 +337,8 @@ mod tests {
     #[case("das_ms")]
     #[case("arr_ms")]
     #[case("soft_drop_ms")]
-    fn input_timings_adjust_in_ten_ms_steps_and_clamp(#[case] name: &str) {
+    #[case("practice_speed_percent")]
+    fn numeric_settings_adjust_in_ten_unit_steps_and_clamp(#[case] name: &str) {
         let mut settings = Settings::new(Config::default());
         settings.selected = settings
             .config
@@ -350,9 +358,14 @@ mod tests {
         for _ in 0..110 {
             settings.key(key(KeyCode::Left));
         }
-        assert_eq!(value(&settings), "0");
+        let minimum = if name == "practice_speed_percent" {
+            10
+        } else {
+            0
+        };
+        assert_eq!(value(&settings), minimum.to_string());
         settings.key(key(KeyCode::Right));
-        assert_eq!(value(&settings), "10");
+        assert_eq!(value(&settings), (minimum + 10).to_string());
         for _ in 0..110 {
             settings.key(key(KeyCode::Right));
         }
@@ -365,7 +378,7 @@ mod tests {
     #[test]
     fn binding_editor_captures_adds_removes_and_cancels_keys() {
         let mut settings = Settings::new(Config::default());
-        settings.selected = 9;
+        settings.selected = 10;
         settings.key(key(KeyCode::Enter));
         settings.key(key(KeyCode::Down));
         settings.key(key(KeyCode::Enter));
@@ -408,7 +421,7 @@ mod tests {
     #[test]
     fn color_changes_apply_only_on_accept() {
         let mut settings = Settings::new(Config::default());
-        settings.selected = 17;
+        settings.selected = 18;
         let original = settings.config.theme.background;
         settings.key(key(KeyCode::Enter));
         settings.key(key(KeyCode::Right));

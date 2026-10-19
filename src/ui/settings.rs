@@ -27,6 +27,8 @@ pub(super) fn draw(frame: &mut Frame<'_>, area: Rect, app: &App) {
         "Horizontal repeat interval; 0 = move to wall after DAS."
     } else if field == "soft_drop_ms" {
         "Drop interval without DAS; 0 = drop to floor without locking."
+    } else if field == "practice_speed_percent" {
+        "Practice gravity only; 100% = normal. Left/Right: 10%."
     } else if field.starts_with("keys.") {
         "Enter opens key bindings; press a key to assign it"
     } else if field.starts_with("theme.") {
@@ -114,6 +116,7 @@ fn setting_rows(
             "das_ms" => "DAS".into(),
             "arr_ms" => "ARR".into(),
             "soft_drop_ms" => "SOFT DROP".into(),
+            "practice_speed_percent" => "PRACTICE SPEED".into(),
             _ => name
                 .replace("keys.", "KEY ")
                 .replace("theme.", "COLOR ")
@@ -134,6 +137,7 @@ fn setting_rows(
                 "mode" => format!("< {} >", settings.config.mode.label()),
                 "next_queue_length" => format!("< {} >", settings.config.next_queue_length),
                 "das_ms" | "arr_ms" | "soft_drop_ms" => format!("< {value} ms >"),
+                "practice_speed_percent" => format!("< {value}% >"),
                 _ => value.clone(),
             }
         };
@@ -307,7 +311,13 @@ mod tests {
     #[case("das_ms", "DAS", "150 ms", "Delay before horizontal repeat")]
     #[case("arr_ms", "ARR", "30 ms", "0 = move to wall after DAS")]
     #[case("soft_drop_ms", "SOFT DROP", "30 ms", "Drop interval without DAS")]
-    fn input_timings_show_units_and_terminal_support(
+    #[case(
+        "practice_speed_percent",
+        "PRACTICE SPEED",
+        "100%",
+        "Practice gravity only"
+    )]
+    fn numeric_settings_show_units_and_terminal_support(
         #[case] name: &str,
         #[case] label: &str,
         #[case] value: &str,
@@ -340,7 +350,7 @@ mod tests {
         for expected in [
             format!("> {label}"),
             format!("< {value} >"),
-            if releases {
+            if releases || name == "practice_speed_percent" {
                 hint.into()
             } else {
                 "OS key repeat applies".into()
@@ -361,7 +371,7 @@ mod tests {
         let mut app = App::try_from(Config::default()).unwrap();
         app.screen = Screen::Settings;
         app.settings = Some(Settings::new(app.config.clone()));
-        app.settings.as_mut().unwrap().selected = 17;
+        app.settings.as_mut().unwrap().selected = 18;
         let key =
             |code| crossterm::event::KeyEvent::new(code, crossterm::event::KeyModifiers::NONE);
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
@@ -388,7 +398,7 @@ mod tests {
             assert!(text.contains(label), "missing {label}");
         }
         app.key(key(crossterm::event::KeyCode::Esc)).unwrap();
-        app.settings.as_mut().unwrap().selected = 7;
+        app.settings.as_mut().unwrap().selected = 8;
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
         app.key(key(crossterm::event::KeyCode::Enter)).unwrap();
         terminal

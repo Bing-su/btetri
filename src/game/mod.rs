@@ -58,6 +58,7 @@ pub struct Game {
     lines: u32,
     pieces: u64,
     practice_resets: u32,
+    practice_speed_percent: u16,
     elapsed: Duration,
     gravity_elapsed: Duration,
     grounded_elapsed: Duration,
@@ -85,6 +86,7 @@ impl Game {
             lines: 0,
             pieces: 0,
             practice_resets: 0,
+            practice_speed_percent: 100,
             elapsed: Duration::ZERO,
             gravity_elapsed: Duration::ZERO,
             grounded_elapsed: Duration::ZERO,
@@ -169,6 +171,18 @@ impl Game {
         if self.soft_drop_interval != Some(interval) {
             self.soft_drop_interval = Some(interval);
             if self.soft_drop {
+                self.gravity_elapsed = Duration::ZERO;
+            }
+        }
+    }
+
+    /// Scale Practice gravity; for example, 200 falls twice as fast as the default 100.
+    /// Clamp to 10–1000 percent to keep gravity finite; other modes ignore this setting.
+    pub fn set_practice_speed_percent(&mut self, percent: u16) {
+        let percent = percent.clamp(10, 1000);
+        if self.practice_speed_percent != percent {
+            self.practice_speed_percent = percent;
+            if self.mode == Mode::Practice {
                 self.gravity_elapsed = Duration::ZERO;
             }
         }
@@ -300,7 +314,10 @@ impl Game {
     }
 
     fn gravity_interval(&self) -> Duration {
-        let seconds = self.mode.gravity_seconds(self.level());
+        let mut seconds = self.mode.gravity_seconds(self.level());
+        if self.mode == Mode::Practice {
+            seconds *= 100.0 / f64::from(self.practice_speed_percent);
+        }
         let gravity = Duration::from_secs_f64(seconds);
         if self.soft_drop {
             self.soft_drop_interval

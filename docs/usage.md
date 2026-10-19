@@ -15,11 +15,11 @@
 
 ## Modes
 
-| Mode            | Rules                                                   | Ranking                                               |
-| --------------- | ------------------------------------------------------- | ----------------------------------------------------- |
-| `40l` (default) | Clear 40 lines; fixed 0.02G; All-Mini+ spins            | Completed runs by time, then unfinished runs by lines |
-| `blitz`         | Score for 120 seconds; increasing gravity; T-spins only | Score descending, then shorter duration               |
-| `practice`      | Fixed 0.02G; All-Mini+ spins; reset after top-out       | No records                                            |
+| Mode            | Rules                                                                    | Ranking                                               |
+| --------------- | ------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `40l` (default) | Clear 40 lines; fixed 0.02G; All-Mini+ spins                             | Completed runs by time, then unfinished runs by lines |
+| `blitz`         | Score for 120 seconds; increasing gravity; T-spins only                  | Score descending, then shorter duration               |
+| `practice`      | Adjustable gravity (default 0.02G); All-Mini+ spins; reset after top-out | No records                                            |
 
 Practice resets the board, hold, and scoring chains; score, lines, elapsed time, and bag sequence continue. The sidebar counts resets.
 
@@ -67,16 +67,19 @@ Piece count and PPS are available for the current result only. Existing stored r
 
 Open SETTINGS from the menu. Changes remain a draft until saved.
 
-| Context                 | Controls                                        |
-| ----------------------- | ----------------------------------------------- |
-| Navigation              | ↑ / ↓; Home / End jumps to first / last item    |
-| Mode / ghost / previews | ← / → or Enter changes the value; previews: 1–6 |
-| DAS / ARR / soft drop   | ← / → adjusts by 10 ms; range: 0–1000 ms        |
-| Player                  | Enter opens the name editor                     |
-| Save draft              | F2 outside an editor, or SAVE                   |
-| Discard draft           | Esc outside an editor, or CANCEL                |
-| Reset draft             | RESET DEFAULTS; save to apply                   |
-| Save failure            | Draft remains available; select SAVE to retry   |
+| Context                 | Controls                                             |
+| ----------------------- | ---------------------------------------------------- |
+| Navigation              | ↑ / ↓; Home / End jumps to first / last item         |
+| Mode / ghost / previews | ← / → or Enter changes the value; previews: 1–6      |
+| DAS / ARR / soft drop   | ← / → adjusts by 10 ms; range: 0–1000 ms             |
+| PRACTICE SPEED          | ← / → adjusts by 10%; range: 10–1000%; default: 100% |
+| Player                  | Enter opens the name editor                          |
+| Save draft              | F2 outside an editor, or SAVE                        |
+| Discard draft           | Esc outside an editor, or CANCEL                     |
+| Reset draft             | RESET DEFAULTS; save to apply                        |
+| Save failure            | Draft remains available; select SAVE to retry        |
+
+PRACTICE SPEED scales automatic falling only in Practice, independently of terminal key-release support. For example, 50% is half speed and 200% is double speed. The saved speed applies when starting or restarting a game; automatic board resets retain it. Other modes keep their usual gravity.
 
 | Input timing | Default | Behavior                                                                                                                  |
 | ------------ | ------- | ------------------------------------------------------------------------------------------------------------------------- |
