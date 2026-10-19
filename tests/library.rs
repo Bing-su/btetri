@@ -45,15 +45,18 @@ proptest! {
 }
 
 #[rstest::rstest]
-fn callers_can_match_typed_errors(
-    #[values("unknown", "marathon", "sprint", "ultra", "")] name: &str,
-) {
+fn callers_can_match_typed_errors(#[values("unknown", "sprint", "ultra", "")] name: &str) {
     let error: InvalidMode = name.parse::<Mode>().unwrap_err();
     assert_eq!(error, InvalidMode);
-    assert_eq!(error.to_string(), "expected 40l, blitz, or practice");
+    assert_eq!(
+        error.to_string(),
+        "expected 40l, blitz, marathon, or practice"
+    );
 }
 
 #[rstest::rstest]
-fn mode_names_round_trip(#[values(Mode::FortyLines, Mode::Blitz, Mode::Practice)] mode: Mode) {
+fn mode_names_round_trip(
+    #[values(Mode::FortyLines, Mode::Blitz, Mode::Marathon, Mode::Practice)] mode: Mode,
+) {
     assert_eq!(mode.to_string().parse::<Mode>().unwrap(), mode);
 }

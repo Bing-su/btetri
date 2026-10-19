@@ -25,7 +25,7 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct Play {
-    /// 40l (40 lines), blitz (2 minutes), or practice (unlimited).
+    /// 40l (40 lines), blitz (2 minutes), marathon (survival), or practice (unlimited).
     pub mode: Mode,
     /// Display name used in the local records.
     #[usage(short = 'n', long)]
@@ -34,7 +34,7 @@ pub struct Play {
 
 #[derive(Debug, Args)]
 pub struct Records {
-    /// 40l or blitz; defaults to 40l.
+    /// 40l, blitz, or marathon; defaults to 40l.
     pub mode: Option<Mode>,
 }
 
@@ -55,6 +55,25 @@ mod tests {
         assert_eq!(play.mode, Mode::FortyLines);
         assert_eq!(play.name.as_deref(), Some("Alice"));
         assert_eq!(parsed.db, Some(PathBuf::from("my games.db")));
+    }
+
+    #[test]
+    fn marathon_play_and_records_are_parsed() {
+        let parsed = Options::parse_from(&[OsStr::new("play"), OsStr::new("marathon")]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Play(Play {
+                mode: Mode::Marathon,
+                ..
+            }))
+        ));
+        let parsed = Options::parse_from(&[OsStr::new("records"), OsStr::new("marathon")]).unwrap();
+        assert!(matches!(
+            parsed.command,
+            Some(Command::Records(Records {
+                mode: Some(Mode::Marathon)
+            }))
+        ));
     }
 
     #[test]

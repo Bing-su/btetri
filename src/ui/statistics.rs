@@ -125,6 +125,7 @@ mod tests {
     #[case(Mode::Blitz, "complete", 1100, "+100 points")]
     #[case(Mode::Blitz, "top_out", 900, "-100 points")]
     #[case(Mode::Blitz, "complete", 1000, "+0 points")]
+    #[case(Mode::Marathon, "top_out", 1100, "+100 points")]
     fn compares_the_modes_ranking_metric(
         #[case] mode: Mode,
         #[case] outcome: &str,

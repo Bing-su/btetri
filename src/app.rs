@@ -695,11 +695,11 @@ impl App {
         match key.code {
             KeyCode::Esc => self.screen = self.records_back,
             KeyCode::Left | KeyCode::Right => {
-                self.record_mode = if self.record_mode == Mode::FortyLines {
-                    Mode::Blitz
-                } else {
-                    Mode::FortyLines
-                };
+                let delta = if key.code == KeyCode::Left { -1 } else { 1 };
+                self.record_mode = self.record_mode.cycle(delta);
+                if self.record_mode == Mode::Practice {
+                    self.record_mode = self.record_mode.cycle(delta);
+                }
                 self.request_records();
             }
             KeyCode::Up => self.record_selection = self.record_selection.saturating_sub(1),
@@ -751,6 +751,7 @@ mod tests {
     #[case(Mode::Practice, 1)]
     #[case(Mode::FortyLines, 0)]
     #[case(Mode::Blitz, 0)]
+    #[case(Mode::Marathon, 0)]
     fn starts_and_restarts_apply_speed_only_to_practice(#[case] mode: Mode, #[case] rows: i32) {
         let mut app = App::try_from(Config {
             mode,
@@ -1224,7 +1225,43 @@ mod tests {
         app.key(key(KeyCode::Right)).unwrap();
         assert_eq!(app.record_mode, Mode::Blitz);
         app.key(key(KeyCode::Right)).unwrap();
+        assert_eq!(app.record_mode, Mode::Marathon);
+        app.key(key(KeyCode::Right)).unwrap();
         assert_eq!(app.record_mode, Mode::FortyLines);
+        app.key(key(KeyCode::Left)).unwrap();
+        assert_eq!(app.record_mode, Mode::Marathon);
+    }
+
+    #[test]
+    fn marathon_top_out_saves_and_opens_its_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("records.db")).unwrap();
+        let mut app = App::try_from(Config {
+            mode: Mode::Marathon,
+            ..Config::default()
+        })
+        .unwrap();
+        app.start();
+        for _ in 0..100 {
+            if app.screen != Screen::Playing {
+                break;
+            }
+            app.key(key(KeyCode::Char(' '))).unwrap();
+        }
+        assert_eq!(app.screen, Screen::GameOver);
+        let record = app.record.clone().unwrap();
+        assert_eq!(record.mode, "marathon");
+        assert_eq!(record.outcome, "top_out");
+        app.process_storage(&store);
+        assert!(matches!(app.save, SaveState::Saved));
+        assert_eq!(
+            store.records(Mode::Marathon).unwrap().as_slice(),
+            std::slice::from_ref(&record)
+        );
+        app.open_records(Mode::Marathon);
+        app.process_storage(&store);
+        assert_eq!(app.record_mode, Mode::Marathon);
+        assert_eq!(app.records.rows(), [record]);
     }
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -1307,7 +1344,7 @@ mod tests {
     #[rstest::rstest]
     fn rapid_half_turns_preserve_gravity(
         #[values(false, true)] keyboard_releases: bool,
-        #[values(Mode::FortyLines, Mode::Blitz, Mode::Practice)] mode: Mode,
+        #[values(Mode::FortyLines, Mode::Blitz, Mode::Marathon, Mode::Practice)] mode: Mode,
     ) {
         for seed in 0..32 {
             let mut app = App::try_from(Config {

@@ -250,6 +250,7 @@ mod tests {
     #[rstest::rstest]
     #[case(Mode::FortyLines)]
     #[case(Mode::Blitz)]
+    #[case(Mode::Marathon)]
     fn personal_best_filters_player_mode_current_run_and_unfinished_sprints(#[case] mode: Mode) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("records.db");
@@ -306,8 +307,10 @@ mod tests {
         assert_eq!(store.personal_best(&current).unwrap(), Some(best));
     }
 
-    #[test]
-    fn settings_survive_reopen_and_failed_writes_roll_back() {
+    #[rstest::rstest]
+    fn settings_survive_reopen_and_failed_writes_roll_back(
+        #[values("practice", "marathon")] mode: &str,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("settings.db");
         let store = Store::open(&path).unwrap();
@@ -315,7 +318,7 @@ mod tests {
         let mut config = Config::default();
         for (name, value) in [
             ("player", "테트리스"),
-            ("mode", "practice"),
+            ("mode", mode),
             ("ghost_enabled", "false"),
             ("next_queue_length", "3"),
             ("das_ms", "120"),

@@ -23,7 +23,7 @@ println!("Score: {}", game.score());
 | Interface                                          | Contract                                                                                                                                                   |
 | -------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `Game::new(mode, seed)`                            | Infallible; the same seed, inputs, and elapsed time produce the same state                                                                                 |
-| `str::parse::<Mode>()`                             | Accepts `40l`, `blitz`, or `practice`; otherwise returns `InvalidMode`                                                                                     |
+| `str::parse::<Mode>()`                             | Accepts `40l`, `blitz`, `marathon`, or `practice`; otherwise returns `InvalidMode`                                                                         |
 | `Game::apply(action)`                              | Apply one input; `Action::SoftDrop` moves one cell                                                                                                         |
 | `Game::advance(duration)`                          | Advance caller-supplied time without I/O                                                                                                                   |
 | `Game::set_soft_drop(pressed)`                     | Set held soft-drop state                                                                                                                                   |
@@ -40,22 +40,24 @@ By default, the library's `set_soft_drop` uses 20× gravity. For example, `set_s
 
 ## Rules
 
-| Rule              | Behavior                                                                                                                                             |
-| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pieces            | Seeded seven-bag generation; hold and ghost support                                                                                                  |
-| Board             | 10 columns; 20 hidden + 20 visible rows; coordinates include hidden rows                                                                             |
-| Visible rows      | Use `HIDDEN` and `VISIBLE_HEIGHT` to select rows from `board()`                                                                                      |
-| Spawn             | Spawn above the visible board; descend one row immediately if free                                                                                   |
-| Top-out           | Spawn overlap, or locking entirely above the visible board without clearing a line                                                                   |
-| Clutch clear      | A line clear prevents hidden lock-out and may lift the next spawn to a free position; holds receive no rescue; cells cannot exceed the hidden buffer |
-| Lock delay        | 500 ms after contact; 15 successful moves/rotations, including airborne moves after contact                                                          |
-| Lock reset        | A new lowest row restores timer and move budget; returning to an old height does not; an exhausted budget locks on contact                           |
-| 90° rotation      | SRS; I-piece uses SRS+ kick order                                                                                                                    |
-| 180° rotation     | TETR.IO kicks                                                                                                                                        |
-| BLITZ progression | Start at level 1; each level needs `ceil(2.1 × level)` more lines: cumulative 3, 8, 15, …                                                            |
-| BLITZ gravity     | `(0.65 − 0.007 × (level − 1))^(level − 1)` seconds per row; capped at 20G                                                                            |
-| 40 LINES          | Level 1 and fixed 0.02G                                                                                                                              |
-| PRACTICE          | Level 1; 0.02G × speed percent / 100; default 100%; retained after automatic board resets                                                            |
+| Rule                 | Behavior                                                                                                                                             |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pieces               | Seeded seven-bag generation; hold and ghost support                                                                                                  |
+| Board                | 10 columns; 20 hidden + 20 visible rows; coordinates include hidden rows                                                                             |
+| Visible rows         | Use `HIDDEN` and `VISIBLE_HEIGHT` to select rows from `board()`                                                                                      |
+| Spawn                | Spawn above the visible board; descend one row immediately if free                                                                                   |
+| Top-out              | Spawn overlap, or locking entirely above the visible board without clearing a line                                                                   |
+| Clutch clear         | A line clear prevents hidden lock-out and may lift the next spawn to a free position; holds receive no rescue; cells cannot exceed the hidden buffer |
+| Lock delay           | 500 ms after contact; 15 successful moves/rotations, including airborne moves after contact                                                          |
+| Lock reset           | A new lowest row restores timer and move budget; returning to an old height does not; an exhausted budget locks on contact                           |
+| 90° rotation         | SRS; I-piece uses SRS+ kick order                                                                                                                    |
+| 180° rotation        | TETR.IO kicks                                                                                                                                        |
+| BLITZ progression    | Start at level 1; each level needs `ceil(2.1 × level)` more lines: cumulative 3, 8, 15, …                                                            |
+| BLITZ gravity        | `(0.65 − 0.007 × (level − 1))^(level − 1)` seconds per row; capped at 20G                                                                            |
+| MARATHON progression | Start at level 1; gain one level every 10 lines, capped at level 20; continue until top-out without a time or line limit                             |
+| MARATHON gravity     | `(0.8 − 0.007 × (level − 1))^(level − 1)` seconds per row; minimum interval 1 ms                                                                     |
+| 40 LINES             | Level 1 and fixed 0.02G                                                                                                                              |
+| PRACTICE             | Level 1; 0.02G × speed percent / 100; default 100%; retained after automatic board resets                                                            |
 
 ## Scoring
 
@@ -78,7 +80,7 @@ By default, the library's `set_soft_drop` uses 20× gravity. For example, `set_s
 | Perfect-clear bonus     | Never multiplied by B2B                                                                                                                             |
 | T-spin                  | Last successful move is rotation; at least three occupied T corners; walls/floor count                                                              |
 | Full / Mini T-spin      | Both front corners filled, or fifth 90° SRS kick: full; otherwise Mini                                                                              |
-| All-Mini+               | In 40 LINES / PRACTICE, an immobile rotated piece qualifies as Mini; T corner classification takes precedence; O rotation counts                    |
+| All-Mini+               | In 40 LINES / MARATHON / PRACTICE, an immobile rotated piece qualifies as Mini; T corner classification takes precedence; O rotation counts         |
 | Rotation history        | Successful translation/gravity or positive-distance drop cancels it; blocked actions and zero-distance hard drops preserve it; spawn/hold resets it |
 | Score panel             | Latest lock award; `C1` means combo 1; excludes drop points                                                                                         |
 

@@ -25,7 +25,7 @@ pub fn run() -> miette::Result<()> {
         && records.mode == Some(crate::game::Mode::Practice)
     {
         return Err(miette::miette!(
-            "practice has no ranked records; choose 40l or blitz"
+            "practice has no ranked records; choose 40l, blitz, or marathon"
         ));
     }
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {

@@ -6,21 +6,29 @@ pub enum Mode {
     #[default]
     FortyLines,
     Blitz,
+    Marathon,
     Practice,
 }
 
 impl Mode {
-    pub const ALL: [Self; 3] = [Self::FortyLines, Self::Blitz, Self::Practice];
+    pub const ALL: [Self; 4] = [
+        Self::FortyLines,
+        Self::Blitz,
+        Self::Marathon,
+        Self::Practice,
+    ];
 
     pub fn cycle(self, delta: i32) -> Self {
         let index = match self {
             Self::FortyLines => 0,
             Self::Blitz => 1,
-            Self::Practice => 2,
+            Self::Marathon => 2,
+            Self::Practice => 3,
         };
-        match (index + delta.rem_euclid(3)).rem_euclid(3) {
+        match (index + delta.rem_euclid(4)).rem_euclid(4) {
             0 => Self::FortyLines,
             1 => Self::Blitz,
+            2 => Self::Marathon,
             _ => Self::Practice,
         }
     }
@@ -29,11 +37,15 @@ impl Mode {
         match self {
             Self::FortyLines => "40 LINES",
             Self::Blitz => "BLITZ",
+            Self::Marathon => "MARATHON",
             Self::Practice => "PRACTICE",
         }
     }
 
     pub(super) fn level(self, mut lines: u32) -> u32 {
+        if self == Self::Marathon {
+            return (1 + lines / 10).min(20);
+        }
         if self != Self::Blitz {
             return 1;
         }
@@ -47,6 +59,10 @@ impl Mode {
     }
 
     pub(super) fn gravity_seconds(self, level: u32) -> f64 {
+        if self == Self::Marathon {
+            let exponent = f64::from(level - 1);
+            return (0.8 - exponent * 0.007).powf(exponent).max(0.001);
+        }
         if self != Self::Blitz {
             return 1.0 / (60.0 * 0.02);
         }
@@ -64,6 +80,7 @@ impl fmt::Display for Mode {
         f.write_str(match self {
             Self::FortyLines => "40l",
             Self::Blitz => "blitz",
+            Self::Marathon => "marathon",
             Self::Practice => "practice",
         })
     }
@@ -76,6 +93,7 @@ impl FromStr for Mode {
         match value {
             "40l" => Ok(Self::FortyLines),
             "blitz" => Ok(Self::Blitz),
+            "marathon" => Ok(Self::Marathon),
             "practice" => Ok(Self::Practice),
             _ => Err(InvalidMode),
         }
@@ -84,5 +102,5 @@ impl FromStr for Mode {
 
 /// A mode name was rejected; for example, use `40l` rather than the retired `sprint`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("expected 40l, blitz, or practice")]
+#[error("expected 40l, blitz, marathon, or practice")]
 pub struct InvalidMode;

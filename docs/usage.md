@@ -9,17 +9,20 @@
 | `cargo run`                          | Open the main menu                       |
 | `cargo run -- play 40l --name Alice` | Start 40 LINES as Alice                  |
 | `cargo run -- play blitz`            | Start BLITZ                              |
+| `cargo run -- play marathon`         | Start MARATHON                           |
+| `cargo run -- records marathon`      | Browse MARATHON records                  |
 | `cargo run -- play practice`         | Start PRACTICE                           |
 | `cargo run -- records 40l`           | Browse 40 LINES records                  |
 | `cargo run -- --db ./records.db`     | Choose the settings and records database |
 
 ## Modes
 
-| Mode            | Rules                                                                    | Ranking                                               |
-| --------------- | ------------------------------------------------------------------------ | ----------------------------------------------------- |
-| `40l` (default) | Clear 40 lines; fixed 0.02G; All-Mini+ spins                             | Completed runs by time, then unfinished runs by lines |
-| `blitz`         | Score for 120 seconds; increasing gravity; T-spins only                  | Score descending, then shorter duration               |
-| `practice`      | Adjustable gravity (default 0.02G); All-Mini+ spins; reset after top-out | No records                                            |
+| Mode            | Rules                                                                                           | Ranking                                               |
+| --------------- | ----------------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| `40l` (default) | Clear 40 lines; fixed 0.02G; All-Mini+ spins                                                    | Completed runs by time, then unfinished runs by lines |
+| `blitz`         | Score for 120 seconds; increasing gravity; T-spins only                                         | Score descending, then shorter duration               |
+| `marathon`      | Survive until top-out; level up every 10 lines to level 20; increasing gravity; All-Mini+ spins | Score descending, then shorter duration               |
+| `practice`      | Adjustable gravity (default 0.02G); All-Mini+ spins; reset after top-out                        | No records                                            |
 
 Practice resets the board, hold, and scoring chains; score, lines, elapsed time, and bag sequence continue. The sidebar counts resets.
 
@@ -49,17 +52,17 @@ Practice resets the board, hold, and scoring chains; score, lines, elapsed time,
 
 ## Results
 
-| Feature             | Contents / controls                                                                                                                  |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| End-of-game summary | Score, cleared lines, and elapsed time after top-out or completion                                                                   |
-| STATISTICS          | Separate screen opened from the result menu; Esc or Enter returns to the summary                                                     |
-| Pieces placed       | Counts locked pieces, including the final lock; hold and an unplaced active piece do not count                                       |
-| PPS                 | Pieces placed divided by active play time in seconds; zero when no time has elapsed                                                  |
-| Personal best       | Previous records for the exact same player name and mode, excluding the current run                                                  |
-| 40 LINES comparison | Previous fastest completed run; signed time difference after completion (negative is faster); unfinished runs cannot set a best time |
-| BLITZ comparison    | Previous highest score, including top-outs; signed score difference (positive is higher)                                             |
-| Query failure       | Statistics remain available; R retries loading the previous best                                                                     |
-| Save failure        | Statistics remain available; return to the summary and press R to retry saving before leaving the result                             |
+| Feature                     | Contents / controls                                                                                                                  |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| End-of-game summary         | Score, cleared lines, and elapsed time after top-out or completion                                                                   |
+| STATISTICS                  | Separate screen opened from the result menu; Esc or Enter returns to the summary                                                     |
+| Pieces placed               | Counts locked pieces, including the final lock; hold and an unplaced active piece do not count                                       |
+| PPS                         | Pieces placed divided by active play time in seconds; zero when no time has elapsed                                                  |
+| Personal best               | Previous records for the exact same player name and mode, excluding the current run                                                  |
+| 40 LINES comparison         | Previous fastest completed run; signed time difference after completion (negative is faster); unfinished runs cannot set a best time |
+| BLITZ / MARATHON comparison | Previous highest score, including top-outs; signed score difference (positive is higher)                                             |
+| Query failure               | Statistics remain available; R retries loading the previous best                                                                     |
+| Save failure                | Statistics remain available; return to the summary and press R to retry saving before leaving the result                             |
 
 Piece count and PPS are available for the current result only. Existing stored records and settings keep their format; PRACTICE continues through automatic resets without an end-of-game screen.
 

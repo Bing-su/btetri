@@ -216,7 +216,7 @@ fn menu(frame: &mut Frame<'_>, area: Rect, app: &App) {
 }
 
 fn help(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    let area = centered(area, 54, 19);
+    let area = centered(area, 54, 20);
     frame.render_widget(Clear, area);
     let keys = &app.config.keys;
     let mut lines = vec![
@@ -243,6 +243,7 @@ fn help(frame: &mut Frame<'_>, area: Rect, app: &App) {
         Line::from(""),
         Line::from("40 LINES: clear 40 lines at fixed gravity"),
         Line::from("BLITZ: score within 2 minutes; gravity increases"),
+        Line::from("MARATHON: survive; level up every 10 lines (max 20)"),
         Line::from("PRACTICE: unlimited; clear board on topout"),
         Line::from(""),
     ];
@@ -297,6 +298,30 @@ mod tests {
             .position(|cells| cells.iter().map(|cell| cell.symbol()).collect::<String>() == text)
             .unwrap();
         buffer.pos_of(index)
+    }
+
+    #[rstest::rstest]
+    fn marathon_and_help_fit_the_terminal(#[values((80, 28), (100, 40))] size: (u16, u16)) {
+        let mut app = App::try_from(Config {
+            mode: Mode::Marathon,
+            ..Config::default()
+        })
+        .unwrap();
+        assert!(screen(&app, size.0, size.1).contains("MARATHON"));
+        app.start();
+        let text = screen(&app, size.0, size.1);
+        assert!(text.contains("MARATHON"), "{text}");
+        assert!(text.contains("LEVEL"), "{text}");
+        app.screen = Screen::Help(HelpReturn::Playing);
+        let text = screen(&app, size.0, size.1);
+        for expected in [
+            "MARATHON: survive",
+            "max 20",
+            "PRACTICE: unlimited",
+            "close",
+        ] {
+            assert!(text.contains(expected), "{text}");
+        }
     }
 
     #[rstest::rstest]

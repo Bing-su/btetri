@@ -206,7 +206,7 @@ fn sidebars(frame: &mut Frame<'_>, left: Rect, next: Rect, game: &Game, app: &Ap
     let time = game.remaining().unwrap_or_else(|| game.elapsed());
     let (progress, value) = match game.mode() {
         Mode::FortyLines => ("TO GO", 40_u32.saturating_sub(game.lines())),
-        Mode::Blitz => ("LEVEL", game.level()),
+        Mode::Blitz | Mode::Marathon => ("LEVEL", game.level()),
         Mode::Practice => ("RESETS", game.practice_resets()),
     };
     for (offset, label, value) in [

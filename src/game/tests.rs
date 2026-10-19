@@ -4,6 +4,70 @@ use rstest::rstest;
 use super::*;
 
 #[rstest]
+#[case(0, 1, 1.0)]
+#[case(9, 1, 1.0)]
+#[case(10, 2, 0.793)]
+#[case(189, 19, 0.001)]
+#[case(190, 20, 0.001)]
+#[case(u32::MAX, 20, 0.001)]
+fn marathon_progression_and_gravity_are_capped(
+    #[case] lines: u32,
+    #[case] level: u32,
+    #[case] seconds: f64,
+) {
+    let mut game = Game::new(Mode::Marathon, 42);
+    game.lines = lines;
+    game.set_practice_speed_percent(1000);
+    assert_eq!(game.level(), level);
+    assert_eq!(game.gravity_interval(), Duration::from_secs_f64(seconds));
+    assert_eq!(game.remaining(), None);
+    let y = game.active().y;
+    let interval = game.gravity_interval();
+    game.advance(interval.saturating_sub(Duration::from_nanos(1)));
+    assert_eq!(game.active().y, y);
+    game.advance(Duration::from_nanos(1));
+    assert_eq!(game.active().y, y + 1);
+}
+
+#[rstest]
+#[case(9, 10, 2, 100)]
+#[case(39, 40, 5, 400)]
+#[case(189, 190, 20, 1900)]
+#[case(199, 200, 20, 2000)]
+fn marathon_scores_before_level_up_and_continues_until_top_out(
+    #[case] lines: u32,
+    #[case] total: u32,
+    #[case] level: u32,
+    #[case] points: u64,
+) {
+    let mut game = Game::new(Mode::Marathon, 42);
+    game.lines = lines;
+    game.elapsed = Duration::from_secs(120);
+    // Retain a block to isolate line scoring, e.g. exclude the perfect-clear bonus.
+    game.board[0][0] = Some(Piece::J);
+    game.board[39] = [Some(Piece::J); WIDTH];
+    game.board[39][4] = None;
+    game.active = ActivePiece {
+        kind: Piece::I,
+        rotation: 1,
+        x: 2,
+        y: 36,
+    };
+    game.apply(Action::HardDrop);
+    assert_eq!(game.lines(), total);
+    assert_eq!(game.level(), level);
+    assert_eq!(game.last_score().unwrap().points, points);
+    assert_eq!(game.status(), Status::Playing);
+    game.advance(Duration::from_millis(1));
+    assert_eq!(game.status(), Status::Playing);
+    assert!(game.elapsed() > Duration::from_secs(120));
+    game.board = [[Some(Piece::J); WIDTH]; HEIGHT];
+    game.apply(Action::Hold);
+    assert_eq!(game.status(), Status::TopOut);
+    assert_eq!(game.practice_resets(), 0);
+}
+
+#[rstest]
 #[case(0, 1)]
 #[case(2, 1)]
 #[case(3, 2)]
@@ -85,6 +149,7 @@ fn changing_practice_speed_restarts_the_timer_only_when_changed() {
 #[rstest]
 #[case(Mode::FortyLines, Spin::Mini)]
 #[case(Mode::Practice, Spin::Mini)]
+#[case(Mode::Marathon, Spin::Mini)]
 #[case(Mode::Blitz, Spin::None)]
 fn immobile_o_rotations_follow_the_modes_spin_rule(#[case] mode: Mode, #[case] spin: Spin) {
     let mut game = Game::new(mode, 42);
@@ -194,6 +259,7 @@ fn pieces_count_locks_not_inputs(#[values(false, true)] timed: bool) {
 #[rstest]
 #[case(Mode::FortyLines, Spin::Mini)]
 #[case(Mode::Practice, Spin::Mini)]
+#[case(Mode::Marathon, Spin::Mini)]
 #[case(Mode::Blitz, Spin::None)]
 fn immobile_t_without_three_corners_is_a_mini_only_with_all_mini_plus(
     #[case] mode: Mode,
