@@ -1,4 +1,4 @@
-## [unreleased]
+## [0.1.0] - 2026-10-19
 
 ### 🚀 Features
 
@@ -27,6 +27,10 @@
 ### ⚙️ Miscellaneous Tasks
 
 - _(tooling)_ Configure Rust linting and formatting checks
+- Add lint and release workflows
+- _(release)_ Configure git-cliff changelog generation
+- Use cargo-cross to build Linux release targets
+- V0.1.0
 
 ### 💼 Other
 
